@@ -627,6 +627,9 @@ ac_webrtc_cflags
 ac_webrtc_instset
 ac_no_webrtc
 ac_no_yuv
+codec2_present
+codec2_h_present
+ac_no_codec2
 opus_present
 opus_h_present
 ac_no_opus
@@ -824,6 +827,8 @@ with_silk
 enable_silk
 with_opus
 enable_opus
+with_codec2
+enable_codec2
 enable_libyuv
 enable_libwebrtc
 '
@@ -1493,6 +1498,9 @@ Optional Features:
   --disable-opus          Exclude OPUS support from the build (default:
                           autodetect)
 
+  --disable-codec2        Exclude Codec 2 support from the build (default:
+                          autodetect)
+
   --disable-libyuv        Exclude libyuv in the build
   --disable-libwebrtc     Exclude libwebrtc in the build
 
@@ -1545,6 +1553,7 @@ Optional Packages:
                           Specify alternate libvo-amrwbenc prefix
   --with-silk=DIR         Specify alternate SILK prefix
   --with-opus=DIR         Specify alternate OPUS prefix
+  --with-codec2=DIR       Specify alternate Codec 2 prefix
 
 Some influential environment variables:
   CC          C compiler command
@@ -8409,6 +8418,107 @@ $as_echo "OPUS library found, OPUS support enabled" >&6; }
 	        	{ $as_echo "$as_me:${as_lineno-$LINENO}: result: OPUS library not found, OPUS support disabled" >&5
 $as_echo "OPUS library not found, OPUS support disabled" >&6; }
 			$as_echo "#define PJMEDIA_HAS_OPUS_CODEC 0" >>confdefs.h
+
+		fi
+
+fi
+
+
+
+# Check whether --with-codec2 was given.
+if test "${with_codec2+set}" = set; then :
+  withval=$with_codec2;
+else
+  with_codec2=no
+
+fi
+
+
+if test "x$ac_cross_compile" != "x" -a "x$with_codec2" = "xno"; then
+    enable_codec2=no
+fi
+
+
+# Check whether --enable-codec2 was given.
+if test "${enable_codec2+set}" = set; then :
+  enableval=$enable_codec2;
+		if test "$enable_codec2" = "no"; then
+		 ac_no_codec2=1
+		 $as_echo "#define PJMEDIA_HAS_CODEC2_CODEC 0" >>confdefs.h
+
+		 { $as_echo "$as_me:${as_lineno-$LINENO}: result: Checking if Codec 2 support is disabled... yes" >&5
+$as_echo "Checking if Codec 2 support is disabled... yes" >&6; }
+	        fi
+
+else
+
+		{ $as_echo "$as_me:${as_lineno-$LINENO}: result: checking for Codec 2 installations.." >&5
+$as_echo "checking for Codec 2 installations.." >&6; }
+                if test "x$with_codec2" != "xno" -a "x$with_codec2" != "x"; then
+                    CFLAGS="$CFLAGS -I$with_codec2/include"
+		    CPPFLAGS="$CPPFLAGS -I$with_codec2/include"
+                    LDFLAGS="$LDFLAGS -L$with_codec2/lib"
+                    { $as_echo "$as_me:${as_lineno-$LINENO}: result: Using Codec 2 prefix... $with_codec2" >&5
+$as_echo "Using Codec 2 prefix... $with_codec2" >&6; }
+                fi
+
+
+		ac_fn_c_check_header_mongrel "$LINENO" "codec2/codec2.h" "ac_cv_header_codec2_codec2_h" "$ac_includes_default"
+if test "x$ac_cv_header_codec2_codec2_h" = xyes; then :
+  codec2_h_present=1
+fi
+
+
+		{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for codec2_create in -lcodec2" >&5
+$as_echo_n "checking for codec2_create in -lcodec2... " >&6; }
+if ${ac_cv_lib_codec2_codec2_create+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  ac_check_lib_save_LIBS=$LIBS
+LIBS="-lcodec2  $LIBS"
+cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+
+/* Override any GCC internal prototype to avoid an error.
+   Use char because int might match the return type of a GCC
+   builtin and then its argument prototype would still apply.  */
+#ifdef __cplusplus
+extern "C"
+#endif
+char codec2_create ();
+int
+main ()
+{
+return codec2_create ();
+  ;
+  return 0;
+}
+_ACEOF
+if ac_fn_c_try_link "$LINENO"; then :
+  ac_cv_lib_codec2_codec2_create=yes
+else
+  ac_cv_lib_codec2_codec2_create=no
+fi
+rm -f core conftest.err conftest.$ac_objext \
+    conftest$ac_exeext conftest.$ac_ext
+LIBS=$ac_check_lib_save_LIBS
+fi
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_codec2_codec2_create" >&5
+$as_echo "$ac_cv_lib_codec2_codec2_create" >&6; }
+if test "x$ac_cv_lib_codec2_codec2_create" = xyes; then :
+  codec2_present=1 && LIBS="-lcodec2 $LIBS"
+fi
+
+		if test "x$codec2_h_present" = "x1" -a "x$codec2_present" = "x1"; then
+			{ $as_echo "$as_me:${as_lineno-$LINENO}: result: Codec 2 library found, Codec 2 support enabled" >&5
+$as_echo "Codec 2 library found, Codec 2 support enabled" >&6; }
+			$as_echo "#define PJMEDIA_HAS_CODEC2_CODEC 1" >>confdefs.h
+
+		else
+			ac_no_codec2=1
+			{ $as_echo "$as_me:${as_lineno-$LINENO}: result: Codec 2 library not found, Codec 2 support disabled" >&5
+$as_echo "Codec 2 library not found, Codec 2 support disabled" >&6; }
+			$as_echo "#define PJMEDIA_HAS_CODEC2_CODEC 0" >>confdefs.h
 
 		fi
 

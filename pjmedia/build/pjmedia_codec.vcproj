@@ -3133,6 +3133,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\src\pjmedia-codec\codec2.c"
+				>
+			</File>
+			<File
 				RelativePath="..\src\pjmedia-codec\ffmpeg_vid_codecs.c"
 				>
 			</File>
@@ -3663,6 +3667,10 @@
 			</File>
 			<File
 				RelativePath="..\include\pjmedia-codec\audio_codecs.h"
+				>
+			</File>
+			<File
+				RelativePath="..\include\pjmedia-codec\codec2.h"
 				>
 			</File>
 			<File

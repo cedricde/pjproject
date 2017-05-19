@@ -89,6 +89,11 @@
 #undef PJMEDIA_HAS_OPUS_CODEC
 #endif
 
+/* Codec 2 codec */
+#ifndef PJMEDIA_HAS_CODEC2_CODEC
+#undef PJMEDIA_HAS_CODEC2_CODEC
+#endif
+
 #endif	/* __PJMEDIA_CODEC_CONFIG_AUTO_H_ */
 
 

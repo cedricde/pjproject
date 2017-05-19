@@ -469,6 +469,26 @@
 #   define PJMEDIA_CODEC_OPUS_DEFAULT_CBR 		PJ_FALSE
 #endif
 
+
+/**
+ * Enable Codec 2 codec.
+ *
+ * Default: 0
+ */
+#ifndef PJMEDIA_HAS_CODEC2_CODEC
+#   define PJMEDIA_HAS_CODEC2_CODEC			0
+#endif
+
+/**
+ * Codec 2 codec mode.
+ *
+ * Default: 0 (3200 bit/s)
+ */
+#ifndef PJMEDIA_CODEC_CODEC2_DEFAULT_MODE
+#   define PJMEDIA_CODEC_CODEC2_DEFAULT_MODE		0
+#endif
+
+
 /**
  * Specify if FFMPEG codecs are available.
  *

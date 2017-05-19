@@ -1767,6 +1767,54 @@ AC_ARG_ENABLE(opus,
 		fi
 	      ])
 
+dnl # Codec 2 prefix
+AC_ARG_WITH(codec2,
+    AS_HELP_STRING([--with-codec2=DIR],
+		   [Specify alternate Codec 2 prefix]),
+    [],
+    [with_codec2=no]
+    )
+
+dnl # Do not use default Codec 2 installation if we are cross-compiling
+if test "x$ac_cross_compile" != "x" -a "x$with_codec2" = "xno"; then
+    enable_codec2=no
+fi
+
+dnl # Include Codec 2 support
+AC_SUBST(ac_no_codec2)
+AC_ARG_ENABLE(codec2,
+	      AS_HELP_STRING([--disable-codec2],
+			     [Exclude Codec 2 support from the build (default: autodetect)])
+	      ,
+	      [
+		if test "$enable_codec2" = "no"; then
+		 [ac_no_codec2=1]
+		 AC_DEFINE(PJMEDIA_HAS_CODEC2_CODEC,0)
+		 AC_MSG_RESULT([Checking if Codec 2 support is disabled... yes])
+	        fi
+	      ],
+	      [
+		AC_MSG_RESULT([checking for Codec 2 installations..])
+                if test "x$with_codec2" != "xno" -a "x$with_codec2" != "x"; then
+                    CFLAGS="$CFLAGS -I$with_codec2/include"
+		    CPPFLAGS="$CPPFLAGS -I$with_codec2/include"
+                    LDFLAGS="$LDFLAGS -L$with_codec2/lib"
+                    AC_MSG_RESULT([Using Codec 2 prefix... $with_codec2])
+                fi
+		AC_SUBST(codec2_h_present)
+		AC_SUBST(codec2_present)
+		AC_CHECK_HEADER(codec2/codec2.h,[codec2_h_present=1])
+		AC_CHECK_LIB(codec2,codec2_create,[codec2_present=1 && LIBS="-lcodec2 $LIBS"])
+		if test "x$codec2_h_present" = "x1" -a "x$codec2_present" = "x1"; then
+			AC_MSG_RESULT([Codec 2 library found, Codec 2 support enabled])
+			AC_DEFINE(PJMEDIA_HAS_CODEC2_CODEC,1)
+		else
+			[ac_no_codec2=1]
+			AC_MSG_RESULT([Codec 2 library not found, Codec 2 support disabled])
+			AC_DEFINE(PJMEDIA_HAS_CODEC2_CODEC,0)
+		fi
+	      ])
+
 dnl # Include libyuv
 AC_SUBST(ac_no_yuv)
 AC_ARG_ENABLE(libyuv,
