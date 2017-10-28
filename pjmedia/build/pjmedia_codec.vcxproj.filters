@@ -74,6 +74,9 @@
     <ClCompile Include="..\src\pjmedia-codec\opus.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\pjmedia-codec\bcg729.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\pjmedia-codec\codec2.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -146,6 +149,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\include\pjmedia-codec\opus.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\include\pjmedia-codec\bcg729.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\include\pjmedia-codec\codec2.h">

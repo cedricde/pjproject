@@ -51,6 +51,38 @@
 
 
 /**
+ * Settings to enable L16 codec 8KHz, mono. By default it is disabled.
+ */
+#ifndef PJMEDIA_CODEC_L16_HAS_8KHZ_MONO
+#   define PJMEDIA_CODEC_L16_HAS_8KHZ_MONO	0
+#endif
+
+
+/**
+ * Settings to enable L16 codec 8KHz, stereo. By default it is disabled.
+ */
+#ifndef PJMEDIA_CODEC_L16_HAS_8KHZ_STEREO
+#   define PJMEDIA_CODEC_L16_HAS_8KHZ_STEREO	0
+#endif
+
+
+/**
+ * Settings to enable L16 codec 16KHz, mono. By default it is disabled.
+ */
+#ifndef PJMEDIA_CODEC_L16_HAS_16KHZ_MONO
+#   define PJMEDIA_CODEC_L16_HAS_16KHZ_MONO	0
+#endif
+
+
+/**
+ * Settings to enable L16 codec 16KHz, stereo. By default it is disabled.
+ */
+#ifndef PJMEDIA_CODEC_L16_HAS_16KHZ_STEREO
+#   define PJMEDIA_CODEC_L16_HAS_16KHZ_STEREO	0
+#endif
+
+
+/**
  * Unless specified otherwise, GSM codec is included by default.
  */
 #ifndef PJMEDIA_HAS_GSM_CODEC
@@ -471,6 +503,16 @@
 
 
 /**
+ * Enable G.729 codec using BCG729 backend.
+ *
+ * Default: 0 
+ */
+#ifndef PJMEDIA_HAS_BCG729
+#   define PJMEDIA_HAS_BCG729				0
+#endif
+
+
+/**
  * Enable Codec 2 codec.
  *
  * Default: 0
@@ -520,10 +562,15 @@
 /**
  * Enable FFMPEG H264 codec (requires libx264).
  *
- * Default: 0
+ * Default: disabled when OpenH264 is used, otherwise it is set to
+ * PJMEDIA_HAS_FFMPEG_VID_CODEC
  */
 #ifndef PJMEDIA_HAS_FFMPEG_CODEC_H264
-#   define PJMEDIA_HAS_FFMPEG_CODEC_H264	PJMEDIA_HAS_FFMPEG_VID_CODEC
+#   if defined(PJMEDIA_HAS_OPENH264_CODEC) && PJMEDIA_HAS_OPENH264_CODEC != 0
+#	define PJMEDIA_HAS_FFMPEG_CODEC_H264	0
+#   else
+#	define PJMEDIA_HAS_FFMPEG_CODEC_H264	PJMEDIA_HAS_FFMPEG_VID_CODEC
+#   endif
 #endif
 
 /**

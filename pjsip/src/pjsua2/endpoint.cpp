@@ -84,6 +84,8 @@ void TlsInfo::fromPj(const pjsip_tls_state_info &info)
     for (unsigned i = 0; i < verif_msg_cnt; ++i) {
         verifyMsgs.push_back(verif_msgs[i]);
     }
+#else
+    PJ_UNUSED_ARG(info);
 #endif
 }
 
@@ -120,7 +122,33 @@ void SslCertInfo::fromPj(const pj_ssl_cert_info &info)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
+IpChangeParam::IpChangeParam()
+{
+    pjsua_ip_change_param param;    
+    pjsua_ip_change_param_default(&param);
+    fromPj(param);
+}
 
+
+pjsua_ip_change_param IpChangeParam::toPj() const
+{
+    pjsua_ip_change_param param;
+    pjsua_ip_change_param_default(&param);
+
+    param.restart_listener = restartListener;
+    param.restart_lis_delay = restartLisDelay;
+
+    return param;
+}
+
+
+void IpChangeParam::fromPj(const pjsua_ip_change_param &param)
+{
+    restartListener = PJ2BOOL(param.restart_listener);
+    restartLisDelay = param.restart_lis_delay;
+}
+
+///////////////////////////////////////////////////////////////////////////////
 UaConfig::UaConfig()
 : mainThreadOnly(false)
 {
@@ -146,6 +174,7 @@ void UaConfig::fromPj(const pjsua_config &ua_cfg)
 	this->stunServer.push_back(pj2Str(ua_cfg.stun_srv[i]));
     }
 
+    this->stunTryIpv6 = PJ2BOOL(ua_cfg.stun_try_ipv6);
     this->stunIgnoreFailure = PJ2BOOL(ua_cfg.stun_ignore_failure);
     this->natTypeInSdp = ua_cfg.nat_type_in_sdp;
     this->mwiUnsolicitedEnabled = PJ2BOOL(ua_cfg.enable_unsolicited_mwi);
@@ -192,6 +221,7 @@ void UaConfig::readObject(const ContainerNode &node) throw(Error)
     NODE_READ_STRINGV ( this_node, nameserver);
     NODE_READ_STRING  ( this_node, userAgent);
     NODE_READ_STRINGV ( this_node, stunServer);
+    NODE_READ_BOOL    ( this_node, stunTryIpv6);
     NODE_READ_BOOL    ( this_node, stunIgnoreFailure);
     NODE_READ_INT     ( this_node, natTypeInSdp);
     NODE_READ_BOOL    ( this_node, mwiUnsolicitedEnabled);
@@ -207,6 +237,7 @@ void UaConfig::writeObject(ContainerNode &node) const throw(Error)
     NODE_WRITE_STRINGV ( this_node, nameserver);
     NODE_WRITE_STRING  ( this_node, userAgent);
     NODE_WRITE_STRINGV ( this_node, stunServer);
+    NODE_WRITE_BOOL    ( this_node, stunTryIpv6);
     NODE_WRITE_BOOL    ( this_node, stunIgnoreFailure);
     NODE_WRITE_INT     ( this_node, natTypeInSdp);
     NODE_WRITE_BOOL    ( this_node, mwiUnsolicitedEnabled);
@@ -1393,12 +1424,49 @@ void Endpoint::on_create_media_transport_srtp(pjsua_call_id call_id,
     call->onCreateMediaTransportSrtp(prm);
     
     srtp_opt->use = prm.srtpUse;
-    srtp_opt->crypto_count = prm.cryptos.size();
+    srtp_opt->crypto_count = (unsigned)prm.cryptos.size();
     for (unsigned i = 0; i < srtp_opt->crypto_count; i++) {
     	srtp_opt->crypto[i].key   = str2Pj(prm.cryptos[i].key);
     	srtp_opt->crypto[i].name  = str2Pj(prm.cryptos[i].name);
     	srtp_opt->crypto[i].flags = prm.cryptos[i].flags;
     }
+}
+
+void Endpoint::on_ip_change_progress(pjsua_ip_change_op op,
+				     pj_status_t status,
+				     const pjsua_ip_change_op_info *info)
+{
+    Endpoint &ep = Endpoint::instance();
+    OnIpChangeProgressParam param;
+
+    param.op = op;
+    param.status = status;
+    switch (op) {
+    case PJSUA_IP_CHANGE_OP_RESTART_LIS:		
+	param.transportId = info->lis_restart.transport_id;	
+	break;
+    case PJSUA_IP_CHANGE_OP_ACC_SHUTDOWN_TP:
+	param.accId = info->acc_shutdown_tp.acc_id;
+	break;
+    case PJSUA_IP_CHANGE_OP_ACC_UPDATE_CONTACT:	
+	param.accId = info->acc_update_contact.acc_id;	
+	param.regInfo.code = info->acc_update_contact.code;
+	param.regInfo.isRegister = 
+				 PJ2BOOL(info->acc_update_contact.is_register);
+	break;
+    case PJSUA_IP_CHANGE_OP_ACC_HANGUP_CALLS:
+	param.accId = info->acc_hangup_calls.acc_id;
+	param.callId = info->acc_hangup_calls.call_id;
+	break;
+    case PJSUA_IP_CHANGE_OP_ACC_REINVITE_CALLS:
+	param.accId = info->acc_reinvite_calls.acc_id;
+	param.callId = info->acc_reinvite_calls.call_id;
+	break;
+    default:
+        param.accId = PJSUA_INVALID_ID;
+        break;
+    }
+    ep.onIpChangeProgress(param);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1463,6 +1531,7 @@ void Endpoint::libInit(const EpConfig &prmEpConfig) throw(Error)
     ua_cfg.cb.on_mwi_info	= &Endpoint::on_mwi_info;
     ua_cfg.cb.on_buddy_state	= &Endpoint::on_buddy_state;
     ua_cfg.cb.on_acc_find_for_incoming  = &Endpoint::on_acc_find_for_incoming;
+    ua_cfg.cb.on_ip_change_progress	= &Endpoint::on_ip_change_progress;
 
     /* Call callbacks */
     ua_cfg.cb.on_call_state             = &Endpoint::on_call_state;
@@ -1877,21 +1946,23 @@ void Endpoint::codecSetPriority(const string &codec_id,
 
 CodecParam Endpoint::codecGetParam(const string &codec_id) const throw(Error)
 {
-    pjmedia_codec_param *pj_param = NULL;
+    CodecParam param;
+    pjmedia_codec_param pj_param;
     pj_str_t codec_str = str2Pj(codec_id);
 
-    PJSUA2_CHECK_EXPR( pjsua_codec_get_param(&codec_str, pj_param) );
+    PJSUA2_CHECK_EXPR( pjsua_codec_get_param(&codec_str, &pj_param) );
 
-    return pj_param;
+    param.fromPj(pj_param);
+    return param;
 }
 
 void Endpoint::codecSetParam(const string &codec_id,
 			     const CodecParam param) throw(Error)
 {
     pj_str_t codec_str = str2Pj(codec_id);
-    pjmedia_codec_param *pj_param = (pjmedia_codec_param*)param;
+    pjmedia_codec_param pj_param = param.toPj();
 
-    PJSUA2_CHECK_EXPR( pjsua_codec_set_param(&codec_str, pj_param) );
+    PJSUA2_CHECK_EXPR( pjsua_codec_set_param(&codec_str, &pj_param) );
 }
 
 void Endpoint::clearCodecInfoList(CodecInfoVector &codec_list)
@@ -1980,4 +2051,10 @@ void Endpoint::resetVideoCodecParam(const string &codec_id) throw(Error)
 #else
     PJ_UNUSED_ARG(codec_id);    
 #endif	
+}
+
+void Endpoint::handleIpChange(const IpChangeParam &param) throw(Error)
+{
+    pjsua_ip_change_param ip_change_param = param.toPj();
+    PJSUA2_CHECK_EXPR(pjsua_handle_ip_change(&ip_change_param));
 }

@@ -1237,7 +1237,7 @@ PJ_DEF(pj_status_t) pjsip_inv_verify_request3(pjsip_rx_data *rdata,
 
 	if (i != allow->count) {
 	    /* UPDATE is present in Allow */
-	    rem_option |= PJSIP_INV_SUPPORT_UPDATE;
+	    *options |= PJSIP_INV_SUPPORT_UPDATE;
 	}
 
     }
@@ -2103,10 +2103,14 @@ static pj_status_t inv_check_sdp_in_incoming_msg( pjsip_inv_session *inv,
 	}
 
 	/* Inform application about remote offer. */
-	if (mod_inv.cb.on_rx_offer && inv->notify) {
+	if (mod_inv.cb.on_rx_offer2 && inv->notify) {
+	    struct pjsip_inv_on_rx_offer_cb_param param;
 
-	    (*mod_inv.cb.on_rx_offer)(inv, sdp_info->sdp);
-
+	    param.offer = sdp_info->sdp;
+	    param.rdata = rdata;
+            (*mod_inv.cb.on_rx_offer2)(inv, &param);
+	} else if (mod_inv.cb.on_rx_offer && inv->notify) {
+            (*mod_inv.cb.on_rx_offer)(inv, sdp_info->sdp);
 	}
 
 	/* application must have supplied an answer at this point. */
@@ -2797,7 +2801,7 @@ PJ_DEF(pj_status_t) pjsip_inv_process_redirect( pjsip_inv_session *inv,
 	    if (op == PJSIP_REDIRECT_ACCEPT_REPLACE) {
 		pjsip_to_hdr *to;
 		pjsip_dialog *dlg = inv->dlg;
-		enum { TMP_LEN = 128 };
+		enum { TMP_LEN = PJSIP_MAX_URL_SIZE };
 		char tmp[TMP_LEN];
 		int len;
 
@@ -3275,7 +3279,7 @@ static void inv_respond_incoming_cancel(pjsip_inv_session *inv,
 
     pjsip_tsx_create_key(rdata->tp_info.pool, &key, PJSIP_ROLE_UAS,
 			 pjsip_get_invite_method(), rdata);
-    invite_tsx = pjsip_tsx_layer_find_tsx(&key, PJ_TRUE);
+    invite_tsx = pjsip_tsx_layer_find_tsx2(&key, PJ_TRUE);
 
     if (invite_tsx == NULL) {
 
@@ -3324,7 +3328,7 @@ static void inv_respond_incoming_cancel(pjsip_inv_session *inv,
     }
 
     if (invite_tsx)
-	pj_grp_lock_release(invite_tsx->grp_lock);
+	pj_grp_lock_dec_ref(invite_tsx->grp_lock);
 }
 
 

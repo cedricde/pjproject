@@ -45,6 +45,7 @@ struct multipart_data
 {
     pj_str_t	    	  boundary;
     pjsip_multipart_part  part_head;
+    pj_str_t		  raw_data;
 };
 
 
@@ -608,6 +609,12 @@ PJ_DEF(pjsip_msg_body*) pjsip_multipart_parse(pj_pool_t *pool,
 
     body = pjsip_multipart_create(pool, ctype, &boundary);
 
+    /* Save full raw body */
+    {
+	struct multipart_data *mp = (struct multipart_data*)body->data;
+	pj_strset(&mp->raw_data, buf, len);
+    }
+
     for (;;) {
 	char *start_body, *end_body;
 	pjsip_multipart_part *part;
@@ -646,13 +653,18 @@ PJ_DEF(pjsip_msg_body*) pjsip_multipart_parse(pj_pool_t *pool,
 
 	end_body = curptr;
 
-	/* The newline preceeding the delimiter is conceptually part of
-	 * the delimiter, so trim it from the body.
+	/* Note that when body is empty, end_body will be equal
+	 * to start_body.
 	 */
-	if (*(end_body-1) == '\n')
-	    --end_body;
-	if (*(end_body-1) == '\r')
-	    --end_body;
+        if (end_body > start_body) {
+	    /* The newline preceeding the delimiter is conceptually part of
+	     * the delimiter, so trim it from the body.
+	     */
+	    if (*(end_body-1) == '\n')
+	        --end_body;
+	    if (*(end_body-1) == '\r')
+	        --end_body;
+        }
 
 	/* Now that we have determined the part's boundary, parse it
 	 * to get the header and body part of the part.
@@ -667,3 +679,26 @@ PJ_DEF(pjsip_msg_body*) pjsip_multipart_parse(pj_pool_t *pool,
     return body;
 }
 
+
+PJ_DEF(pj_status_t) pjsip_multipart_get_raw( pjsip_msg_body *mp,
+					     pj_str_t *boundary,
+					     pj_str_t *raw_data)
+{
+    struct multipart_data *m_data;
+
+    /* Must specify mandatory params */
+    PJ_ASSERT_RETURN(mp, PJ_EINVAL);
+
+    /* mp must really point to an actual multipart msg body */
+    PJ_ASSERT_RETURN(mp->print_body==&multipart_print_body, PJ_EINVAL);
+
+    m_data = (struct multipart_data*)mp->data;
+
+    if (boundary)
+	*boundary = m_data->boundary;
+
+    if (raw_data)
+	*raw_data = m_data->raw_data;
+
+    return PJ_SUCCESS;
+}

@@ -266,6 +266,12 @@ AC_CHECK_HEADER(net/if.h,[AC_DEFINE(PJ_HAS_NET_IF_H,1)],[],
           	  #endif
           	 ])
 
+case $target in
+  *android*)
+	AC_CHECK_HEADER(linux/android_alarm.h,[AC_DEFINE(PJ_HAS_ANDROID_ALARM_H,1)])
+	;;
+esac
+
 AC_CHECK_FUNC(localtime_r,[AC_DEFINE(PJ_HAS_LOCALTIME_R,1)])
 
 AC_MSG_RESULT([Setting PJ_OS_NAME to $target])
@@ -462,12 +468,16 @@ case $target in
 	ac_os_objs="$ac_os_objs file_access_unistd.o file_io_ansi.o os_core_unix.o os_error_unix.o os_time_unix.o os_timestamp_posix.o"
 	case $target in
 	  *-apple-darwin_ios*)
-		ac_os_objs="$ac_os_objs os_info_iphone.o"
+		ac_os_objs="$ac_os_objs os_info_iphone.o os_core_darwin.o"
+		;;
+	  *darwin*)
+		ac_os_objs="$ac_os_objs os_core_darwin.o"
 		;;
 	esac
 	# QoS
 	case $target in
 	  *darwin*)
+		ac_os_objs="$ac_os_objs sock_qos_darwin.o sock_qos_bsd.o"
 		;;
 	  *)
 		ac_os_objs="$ac_os_objs sock_qos_bsd.o"
@@ -486,12 +496,6 @@ case $target in
 		fi
 		;;
 	esac
-	;;
-esac
-
-case $target in
-  *darwin*)
-	ac_os_objs="$ac_os_objs sock_qos_darwin.o os_core_darwin.o"
 	;;
 esac
 
@@ -560,6 +564,7 @@ AC_ARG_WITH(external-gsm,
 
 dnl # Use external SRTP installation
 AC_SUBST(ac_external_srtp,0)
+AC_SUBST(ac_external_srtp_lib)
 AC_ARG_WITH(external-srtp,
     AS_HELP_STRING([--with-external-srtp],
 		   [Use external SRTP development files, not the one in "third_party" directory. When this option is set, make sure that SRTP is accessible to use (hint: use CFLAGS and LDFLAGS env var to set the include/lib paths)]),
@@ -567,24 +572,32 @@ AC_ARG_WITH(external-srtp,
 	if test "x$with_external_srtp" != "xno"; then
 		# Test SRTP installation
 		AC_MSG_CHECKING([if external SRTP devkit is installed])
-		AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <srtp/srtp.h>
+		AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <srtp2/srtp.h>
 						     ]],
 						  [srtp_init();])],
-				  [AC_MSG_RESULT(yes!!)
-				   ac_external_srtp="1"
+				  [AC_MSG_RESULT(yes: version 2.x)
+				   ac_external_srtp="2"
+				   ac_external_srtp_lib="srtp2"
 				   ],
-				  [AC_MSG_ERROR([Unable to use SRTP. If SRTP development files are not available in the default locations, use CFLAGS and LDFLAGS env var to set the include/lib paths])])
+				  [AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <srtp/srtp.h>
+						     ]],
+						  [srtp_init();])],
+				  [AC_MSG_RESULT(yes: version 1.x)
+				   ac_external_srtp="1"
+				   ac_external_srtp_lib="srtp"
+				   ],
+				  [AC_MSG_ERROR([Unable to use SRTP. If SRTP development files are not available in the default locations, use CFLAGS and LDFLAGS env var to set the include/lib paths])])])
 	fi
     ]
     )
 
 dnl # For external SRTP, check availability of srtp_deinit() or srtp_shutdown()
-if test "x$ac_external_srtp" = "x1"; then
+if test "x$ac_external_srtp" != "x0"; then
 	AC_SUBST(ac_srtp_deinit_present,0)
 	AC_SUBST(ac_srtp_shutdown_present,0)
-	AC_CHECK_LIB(srtp,srtp_deinit,[ac_srtp_deinit_present=1])
+	AC_CHECK_LIB($ac_external_srtp_lib,srtp_deinit,[ac_srtp_deinit_present=1])
 	if test "x$ac_srtp_deinit_present" != "x1"; then
-		AC_CHECK_LIB(srtp,srtp_shutdown,[ac_srtp_shutdown_present=1])
+		AC_CHECK_LIB($ac_external_srtp_lib,srtp_shutdown,[ac_srtp_shutdown_present=1])
 	fi
 fi
 
@@ -806,6 +819,7 @@ else
   *darwin*)
 	ac_pjmedia_video=darwin_os
 	AC_SUBST(ac_pjmedia_video_has_darwin)
+	AC_SUBST(ac_pjmedia_video_has_vtoolbox)
 	AC_SUBST(ac_pjmedia_video_has_ios_opengl)
 	AC_SUBST(ac_darwin_cflags)
 	SAVED_LIBS="$LIBS"
@@ -813,6 +827,10 @@ else
 	AC_LINK_IFELSE([AC_LANG_PROGRAM([[]], [])],
 		       [ac_pjmedia_video_has_darwin=yes],
 		       [ac_pjmedia_video_has_darwin=no])
+	LIBS="-framework VideoToolbox"
+	AC_LINK_IFELSE([AC_LANG_PROGRAM([[]], [])],
+		       [ac_pjmedia_video_has_vtoolbox=yes],
+		       [ac_pjmedia_video_has_vtoolbox=no])
 	LIBS="-framework OpenGLES"
 	AC_LINK_IFELSE([AC_LANG_PROGRAM([[]], [])],
 		       [ac_pjmedia_video_has_ios_opengl=yes],
@@ -824,6 +842,13 @@ else
 	  AC_MSG_RESULT([Checking if AVFoundation framework is available... yes])
 	else
 	  AC_MSG_RESULT([Checking if AVFoundation framework is available... no])
+	fi
+	if test "$ac_pjmedia_video_has_vtoolbox" = "yes"; then
+	  #ac_darwin_cflags+=" -DPJMEDIA_HAS_VID_TOOLBOX_CODEC=1"
+	  LIBS="$LIBS -framework VideoToolbox"
+	  AC_MSG_RESULT([Checking if VideoToolbox framework is available... yes])
+	else
+	  AC_MSG_RESULT([Checking if VideoToolbox framework is available... no])
 	fi
 	if test "$ac_pjmedia_video_has_ios_opengl" = "yes"; then
 	  ac_darwin_cflags+=" -DPJMEDIA_VIDEO_DEV_HAS_IOS_OPENGL=1"
@@ -1563,8 +1588,10 @@ AC_ARG_ENABLE(ssl,
 			# support, to enable cryptos such as AES GCM.
 			
 			# EVP_CIPHER_CTX is now opaque in OpenSSL 1.1.0, libsrtp 1.5.4 uses it as a transparent type.
+			# Update 2.7: our bundled libsrtp has been upgraded to 2.1.0,
+			# so we can omit EVP_CIPHER_CTX definition check now.
 			AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <openssl/evp.h>]],
-							  [EVP_CIPHER_CTX ctx;EVP_aes_128_gcm();])],
+							  [EVP_CIPHER_CTX *ctx;EVP_aes_128_gcm();])],
 					  [AC_CHECK_LIB(crypto,EVP_aes_128_gcm,[ac_ssl_has_aes_gcm=1])])
 			if test "x$ac_ssl_has_aes_gcm" = "x1"; then
 				AC_MSG_RESULT([OpenSSL has AES GCM support, SRTP will use OpenSSL])
@@ -1767,6 +1794,75 @@ AC_ARG_ENABLE(opus,
 		fi
 	      ])
 
+dnl # bcg729 prefix
+AC_ARG_WITH(bcg729,
+            AS_HELP_STRING([--with-bcg729=DIR],
+		           [Specify alternate bcg729 prefix]),
+            [],
+            [with_bcg729=no]
+            )
+
+dnl # Do not use default bcg729 installation if we are cross-compiling
+if test "x$ac_cross_compile" != "x" -a "x$with_bcg729" = "xno"; then
+    enable_bcg729=no
+fi
+
+dnl # bcg729
+AC_SUBST(ac_no_bcg729)
+AC_ARG_ENABLE(bcg729,
+	      AS_HELP_STRING([--disable-bcg729],
+			     [Disable bcg729 (default: not disabled)]),
+	      [
+		if test "$enable_bcg729" = "no"; then
+		  [ac_no_bcg729=1]
+		  AC_DEFINE(PJMEDIA_HAS_BCG729,0)
+		  AC_MSG_RESULT([Checking if bcg729 is disabled... yes])
+		fi
+	      ],
+	      [
+		  if test "x$with_bcg729" != "xno" -a "x$with_bcg729" != "x"; then
+		        BCG729_PREFIX=$with_bcg729
+		  	BCG729_CFLAGS="-I$BCG729_PREFIX/include"
+			BCG729_LDFLAGS="-L$BCG729_PREFIX/lib" 
+			AC_MSG_RESULT([Using bcg729 prefix... $with_bcg729])
+		  else
+		  	BCG729_CFLAGS=""
+			BCG729_LDFLAGS="" 
+		  fi
+
+		  AC_MSG_CHECKING([bcg729 usability])
+
+		  BCG729_LIBS="-lbcg729"
+		  
+		  SAVED_LIBS="$LIBS"
+		  SAVED_LDFLAGS="$LDFLAGS"
+		  SAVED_CFLAGS="$CFLAGS"
+		  
+		  LIBS="$BCG729_LIBS $LIBS"
+		  LDFLAGS="$BCG729_LDFLAGS $LDFLAGS"
+		  CFLAGS="$BCG729_CFLAGS $CFLAGS"
+		  
+		  AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <bcg729/encoder.h>
+		                                    #include <bcg729/decoder.h>
+					          ]],
+					          [initBcg729EncoderChannel(0);]
+					         )],
+		  		 [ 
+				   AC_DEFINE(PJMEDIA_HAS_BCG729,1)
+		  		   AC_MSG_RESULT(ok)
+		  		  ],
+		  		 [
+				   [ac_no_bcg729=1]
+				   AC_DEFINE(PJMEDIA_HAS_BCG729,0)
+				   LIBS="$SAVED_LIBS"
+				   LDFLAGS="$SAVED_LDFLAGS"
+				   CFLAGS="$SAVED_CFLAGS"
+		  		   AC_MSG_RESULT(no)
+		  		 ])
+
+	      ])
+		  
+
 dnl # Codec 2 prefix
 AC_ARG_WITH(codec2,
     AS_HELP_STRING([--with-codec2=DIR],
@@ -1814,6 +1910,7 @@ AC_ARG_ENABLE(codec2,
 			AC_DEFINE(PJMEDIA_HAS_CODEC2_CODEC,0)
 		fi
 	      ])
+
 
 dnl # Include libyuv
 AC_SUBST(ac_no_yuv)

@@ -676,11 +676,14 @@ static pj_status_t turn_on_send_pkt(pj_turn_session *sess,
 	return PJ_EINVALIDOP;
     }
 
-    PJ_UNUSED_ARG(dst_addr);
-    PJ_UNUSED_ARG(dst_addr_len);
-
-    status = pj_activesock_send(turn_sock->active_sock, &turn_sock->send_key,
-				pkt, &len, 0);
+    if (turn_sock->conn_type == PJ_TURN_TP_UDP) {
+	status = pj_activesock_sendto(turn_sock->active_sock,
+				      &turn_sock->send_key, pkt, &len, 0,
+				      dst_addr, dst_addr_len);
+    } else {
+	status = pj_activesock_send(turn_sock->active_sock,
+				    &turn_sock->send_key, pkt, &len, 0);
+    }
     if (status != PJ_SUCCESS && status != PJ_EPENDING) {
 	show_err(turn_sock, "socket send()", status);
     }
@@ -889,10 +892,15 @@ static void turn_on_state(pj_turn_session *sess,
 
 	/* Initiate non-blocking connect */
 #if PJ_HAS_TCP
-	status=pj_activesock_start_connect(turn_sock->active_sock, 
-					   turn_sock->pool,
-					   &info.server, 
-					   pj_sockaddr_get_len(&info.server));
+	if (turn_sock->conn_type != PJ_TURN_TP_UDP) {
+	    status=pj_activesock_start_connect(
+					turn_sock->active_sock, 
+					turn_sock->pool,
+					&info.server, 
+					pj_sockaddr_get_len(&info.server));
+	} else {
+	    status = PJ_SUCCESS;
+	}
 	if (status == PJ_SUCCESS) {
 	    on_connect_complete(turn_sock->active_sock, PJ_SUCCESS);
 	} else if (status != PJ_EPENDING) {

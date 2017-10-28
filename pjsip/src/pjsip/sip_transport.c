@@ -253,6 +253,7 @@ PJ_DEF(pj_status_t) pjsip_transport_register_type( unsigned tp_flag,
 						   int *p_tp_type)
 {
     unsigned i;
+    pjsip_transport_type_e parent = 0;
 
     PJ_ASSERT_RETURN(tp_flag && tp_name && def_port, PJ_EINVAL);
     PJ_ASSERT_RETURN(pj_ansi_strlen(tp_name) < 
@@ -260,6 +261,11 @@ PJ_DEF(pj_status_t) pjsip_transport_register_type( unsigned tp_flag,
 		     PJ_ENAMETOOLONG);
 
     for (i=1; i<PJ_ARRAY_SIZE(transport_names); ++i) {
+        if (tp_flag & PJSIP_TRANSPORT_IPV6 && 
+            pj_stricmp2(&transport_names[i].name, tp_name) == 0)
+        {
+	    parent = transport_names[i].type;
+        }
 	if (transport_names[i].type == 0)
 	    break;
     }
@@ -267,14 +273,19 @@ PJ_DEF(pj_status_t) pjsip_transport_register_type( unsigned tp_flag,
     if (i == PJ_ARRAY_SIZE(transport_names))
 	return PJ_ETOOMANY;
 
-    transport_names[i].type = (pjsip_transport_type_e)i;
+    if (tp_flag & PJSIP_TRANSPORT_IPV6 && parent) {
+        transport_names[i].type = parent | PJSIP_TRANSPORT_IPV6;
+    } else {
+        transport_names[i].type = (pjsip_transport_type_e)i;
+    }
+
     transport_names[i].port = (pj_uint16_t)def_port;
     pj_ansi_strcpy(transport_names[i].name_buf, tp_name);
     transport_names[i].name = pj_str(transport_names[i].name_buf);
     transport_names[i].flag = tp_flag;
 
     if (p_tp_type)
-	*p_tp_type = i;
+	*p_tp_type = transport_names[i].type;
 
     return PJ_SUCCESS;
 }
@@ -422,7 +433,8 @@ PJ_DEF(pj_status_t) pjsip_tx_data_create( pjsip_tpmgr *mgr,
     tdata = PJ_POOL_ZALLOC_T(pool, pjsip_tx_data);
     tdata->pool = pool;
     tdata->mgr = mgr;
-    pj_memcpy(tdata->obj_name, pool->obj_name, PJ_MAX_OBJ_NAME);
+    pj_ansi_snprintf(tdata->obj_name, sizeof(tdata->obj_name), "tdta%p", tdata);
+    pj_memcpy(pool->obj_name, tdata->obj_name, sizeof(pool->obj_name));
 
     status = pj_atomic_create(tdata->pool, 0, &tdata->ref_cnt);
     if (status != PJ_SUCCESS) {
@@ -1163,11 +1175,22 @@ static pj_status_t destroy_transport( pjsip_tpmgr *mgr,
  */
 PJ_DEF(pj_status_t) pjsip_transport_shutdown(pjsip_transport *tp)
 {
+    return pjsip_transport_shutdown2(tp, PJ_FALSE);
+}
+
+
+/*
+ * Start shutdown procedure for this transport. 
+ */
+PJ_DEF(pj_status_t) pjsip_transport_shutdown2(pjsip_transport *tp,
+					      pj_bool_t force)
+{
     pjsip_tpmgr *mgr;
     pj_status_t status;
     pjsip_tp_state_callback state_cb;
 
-    TRACE_((THIS_FILE, "Transport %s shutting down", tp->obj_name));
+    PJ_LOG(4, (THIS_FILE, "Transport %s shutting down, force=%d",
+			  tp->obj_name, force));
 
     pj_lock_acquire(tp->lock);
 
@@ -1187,18 +1210,19 @@ PJ_DEF(pj_status_t) pjsip_transport_shutdown(pjsip_transport *tp)
     if (tp->do_shutdown)
 	status = tp->do_shutdown(tp);
 
+    if (status == PJ_SUCCESS)
+	tp->is_shutdown = PJ_TRUE;
+
     /* Notify application of transport shutdown */
     state_cb = pjsip_tpmgr_get_state_cb(tp->tpmgr);
     if (state_cb) {
 	pjsip_transport_state_info state_info;
 
 	pj_bzero(&state_info, sizeof(state_info));
-	state_info.status = status;
-        (*state_cb)(tp, PJSIP_TP_STATE_SHUTDOWN, &state_info);
+	state_info.status = PJ_ECANCELLED;
+	(*state_cb)(tp, (force? PJSIP_TP_STATE_DISCONNECTED:
+		    PJSIP_TP_STATE_SHUTDOWN), &state_info);
     }
-
-    if (status == PJ_SUCCESS)
-	tp->is_shutdown = PJ_TRUE;
 
     /* If transport reference count is zero, start timer count-down */
     if (pj_atomic_get(tp->ref_cnt) == 0) {

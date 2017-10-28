@@ -305,6 +305,11 @@ PJ_DEF(void) pjsua_acc_config_default(pjsua_acc_config *cfg)
     cfg->mwi_expires = PJSIP_MWI_DEFAULT_EXPIRES;
 
     cfg->media_stun_use = PJSUA_STUN_RETRY_ON_FAILURE;
+    cfg->ip_change_cfg.shutdown_tp = PJ_TRUE;
+    cfg->ip_change_cfg.hangup_calls = PJ_FALSE;
+    cfg->ip_change_cfg.reinvite_flags = PJSUA_CALL_REINIT_MEDIA |
+					PJSUA_CALL_UPDATE_CONTACT |
+					PJSUA_CALL_UPDATE_VIA;
 }
 
 PJ_DEF(void) pjsua_buddy_config_default(pjsua_buddy_config *cfg)
@@ -1297,9 +1302,14 @@ static pj_bool_t test_stun_on_status(pj_stun_sock *stun_sock,
 
 	stun_resolve_add_ref(sess);
 
-	++sess->idx;
-	if (sess->idx >= sess->count)
-            sess->status = status;
+	if (pjsua_var.ua_cfg.stun_try_ipv6 && sess->af == pj_AF_INET()) {
+	    sess->af = pj_AF_INET6();
+	} else {
+	    ++sess->idx;
+	    sess->af = pj_AF_INET();
+	    if (sess->idx >= sess->count)
+                sess->status = status;
+        }
 
 	resolve_stun_entry(sess);
 
@@ -1339,7 +1349,10 @@ static void resolve_stun_entry(pjsua_stun_resolve *sess)
     pj_status_t status = PJ_EUNKNOWN;
 
     /* Loop while we have entry to try */
-    for (; sess->idx < sess->count; ++sess->idx) {
+    for (; sess->idx < sess->count;
+    	 (pjsua_var.ua_cfg.stun_try_ipv6 && sess->af == pj_AF_INET())?
+	 sess->af = pj_AF_INET6(): (++sess->idx, sess->af = pj_AF_INET()))
+    {
 	int af;
 	char target[64];
 	pj_str_t hostpart;
@@ -1358,14 +1371,6 @@ static void resolve_stun_entry(pjsua_stun_resolve *sess)
 	if (status != PJ_SUCCESS) {
     	    PJ_LOG(2,(THIS_FILE, "Invalid STUN server entry %s", target));
 	    continue;
-	} else if (af != pj_AF_INET()) {
-	    /* Ignore IPv6 STUN server for now */
-	    status = PJ_EAFNOTSUP;
-	    PJ_LOG(3,(THIS_FILE, "Ignored STUN server entry %s, currently "
-				 "only IPv4 STUN server is supported (does "
-				 "IPv6 still need a mapped address?)",
-		      target));
-	    continue;
 	}
 	
 	/* Use default port if not specified */
@@ -1374,15 +1379,16 @@ static void resolve_stun_entry(pjsua_stun_resolve *sess)
 
 	pj_assert(sess->stun_sock == NULL);
 
-	PJ_LOG(4,(THIS_FILE, "Trying STUN server %s (%d of %d)..",
-		  target, sess->idx+1, sess->count));
+	PJ_LOG(4,(THIS_FILE, "Trying STUN server %s %s (%d of %d)..",
+		  target, (sess->af == pj_AF_INET()? "IPv4": "IPv6"),
+		  sess->idx+1, sess->count));
 
 	/* Use STUN_sock to test this entry */
 	pj_bzero(&stun_sock_cb, sizeof(stun_sock_cb));
 	stun_sock_cb.on_status = &test_stun_on_status;
 	sess->async_wait = PJ_FALSE;
 	status = pj_stun_sock_create(&pjsua_var.stun_cfg, "stunresolve",
-				     pj_AF_INET(), &stun_sock_cb,
+				     sess->af, &stun_sock_cb,
 				     NULL, sess, &sess->stun_sock);
 	if (status != PJ_SUCCESS) {
 	    char errmsg[PJ_ERR_MSG_SIZE];
@@ -1488,6 +1494,7 @@ PJ_DEF(pj_status_t) pjsua_resolve_stun_servers( unsigned count,
     sess->blocking = wait;
     sess->waiter = pj_thread_this();
     sess->status = PJ_EPENDING;
+    sess->af = pj_AF_INET();
     sess->srv = (pj_str_t*) pj_pool_calloc(pool, count, sizeof(pj_str_t));
     for (i=0; i<count; ++i) {
 	pj_strdup(pool, &sess->srv[i], &srv[i]);
@@ -2157,18 +2164,22 @@ static pj_status_t create_sip_udp_sock(int af,
 	if (pj_sockaddr_get_port(p_pub_addr) == 0)
 	    pj_sockaddr_set_port(p_pub_addr, (pj_uint16_t)port);
 
-    } else if (stun_srv.slen && af == pj_AF_INET()) {
+    } else if (stun_srv.slen &&
+               (af == pj_AF_INET() || pjsua_var.ua_cfg.stun_try_ipv6))
+    {
 	pjstun_setting stun_opt;
 
 	/*
 	 * STUN is specified, resolve the address with STUN.
-	 * Currently, this is available for IPv4 address only.
+	 * Currently, this is only to get IPv4 mapped address
+	 * (does IPv6 still need a mapped address?).
 	 */
 	pj_bzero(&stun_opt, sizeof(stun_opt));
 	stun_opt.use_stun2 = pjsua_var.ua_cfg.stun_map_use_stun2;
+	stun_opt.af = pjsua_var.stun_srv.addr.sa_family;
 	stun_opt.srv1  = stun_opt.srv2  = stun_srv;
 	stun_opt.port1 = stun_opt.port2 = 
-			 pj_ntohs(pjsua_var.stun_srv.ipv4.sin_port);
+			 pj_sockaddr_get_port(&pjsua_var.stun_srv);
 	status = pjstun_get_mapped_addr2(&pjsua_var.cp.factory, &stun_opt,
 					 1, &sock, &p_pub_addr->ipv4);
 	if (status != PJ_SUCCESS) {
@@ -2361,7 +2372,7 @@ PJ_DEF(pj_status_t) pjsua_transport_create( pjsip_transport_type_e type,
 	/* Copy the sockopt */
 	pj_memcpy(&tcp_cfg.sockopt_params, &cfg->sockopt_params,
 		  sizeof(tcp_cfg.sockopt_params));
-	
+
 	/* Create the TCP transport */
 	status = pjsip_tcp_transport_start3(pjsua_var.endpt, &tcp_cfg, &tcp);
 
@@ -2419,8 +2430,7 @@ PJ_DEF(pj_status_t) pjsua_transport_create( pjsip_transport_type_e type,
 	if (cfg->public_addr.slen)
 	    a_name.host = cfg->public_addr;
 
-	status = pjsip_tls_transport_start2(pjsua_var.endpt,
-					    &cfg->tls_setting,
+	status = pjsip_tls_transport_start2(pjsua_var.endpt, &cfg->tls_setting,
 					    &local_addr, &a_name, 1, &tls);
 	if (status != PJ_SUCCESS) {
 	    pjsua_perror(THIS_FILE, "Error creating SIP TLS listener", 
@@ -2705,6 +2715,66 @@ PJ_DEF(pj_status_t) pjsua_transport_close( pjsua_transport_id id,
 }
 
 
+PJ_DEF(pj_status_t) pjsua_transport_lis_start(pjsua_transport_id id,
+					     const pjsua_transport_config *cfg)
+{
+    pj_status_t status = PJ_SUCCESS;
+    pjsip_transport_type_e tp_type;
+
+    /* Make sure id is in range. */
+    PJ_ASSERT_RETURN(id>=0 && id<(int)PJ_ARRAY_SIZE(pjsua_var.tpdata), 
+		     PJ_EINVAL);
+
+    /* Make sure that transport exists */
+    PJ_ASSERT_RETURN(pjsua_var.tpdata[id].data.ptr != NULL, PJ_EINVAL);
+
+    tp_type = pjsua_var.tpdata[id].type & ~PJSIP_TRANSPORT_IPV6;
+ 
+    if ((tp_type == PJSIP_TRANSPORT_TLS) || (tp_type == PJSIP_TRANSPORT_TCP)) {
+	pj_sockaddr bind_addr;
+	pjsip_host_port addr_name;
+	pjsip_tpfactory *factory = pjsua_var.tpdata[id].data.factory;
+	
+        int af = pjsip_transport_type_get_af(factory->type);
+
+	if (cfg->port)
+	    pj_sockaddr_set_port(&bind_addr, (pj_uint16_t)cfg->port);
+
+	if (cfg->bound_addr.slen) {
+	    status = pj_sockaddr_set_str_addr(af, 
+					      &bind_addr,
+					      &cfg->bound_addr);
+	    if (status != PJ_SUCCESS) {
+		pjsua_perror(THIS_FILE, 
+			     "Unable to resolve transport bound address", 
+			     status);
+		return status;
+	    }
+	}
+
+	/* Set published name */
+	if (cfg->public_addr.slen)
+	    addr_name.host = cfg->public_addr;
+
+	if (tp_type == PJSIP_TRANSPORT_TCP) {
+	    status = pjsip_tcp_transport_lis_start(factory, &bind_addr,
+						   &addr_name);
+	}
+#if defined(PJSIP_HAS_TLS_TRANSPORT) && PJSIP_HAS_TLS_TRANSPORT!=0
+	else {
+	    status = pjsip_tls_transport_lis_start(factory, &bind_addr,
+						   &addr_name);	
+	}
+#endif	
+    } else if (tp_type == PJSIP_TRANSPORT_UDP) {
+	status = PJ_SUCCESS;
+    } else {
+	status = PJ_EINVAL;
+    }
+    return status;
+}
+
+
 /*
  * Add additional headers etc in msg_data specified by application
  * when sending requests.
@@ -2859,6 +2929,14 @@ void pjsua_init_tpselector(pjsua_transport_id tp_id,
 }
 
 
+PJ_DEF(void) pjsua_ip_change_param_default(pjsua_ip_change_param *param)
+{
+    pj_bzero(param, sizeof(*param));
+    param->restart_listener = PJ_TRUE;
+    param->restart_lis_delay = PJSUA_TRANSPORT_RESTART_DELAY_TIME;
+}
+
+
 /* Callback upon NAT detection completion */
 static void nat_detect_cb(void *user_data, 
 			  const pj_stun_nat_detect_result *res)
@@ -2894,14 +2972,14 @@ PJ_DEF(pj_status_t) pjsua_detect_nat_type()
     }
 
     /* Make sure we have STUN */
-    if (pjsua_var.stun_srv.ipv4.sin_family == 0) {
+    if (pjsua_var.stun_srv.addr.sa_family == 0) {
 	pjsua_var.nat_status = PJNATH_ESTUNINSERVER;
 	return PJNATH_ESTUNINSERVER;
     }
 
-    status = pj_stun_detect_nat_type(&pjsua_var.stun_srv.ipv4, 
-				     &pjsua_var.stun_cfg, 
-				     NULL, &nat_detect_cb);
+    status = pj_stun_detect_nat_type2(&pjsua_var.stun_srv, 
+				      &pjsua_var.stun_cfg, 
+				      NULL, &nat_detect_cb);
 
     if (status != PJ_SUCCESS) {
 	pjsua_var.nat_status = status;
@@ -3265,3 +3343,244 @@ PJ_DEF(void) pjsua_dump(pj_bool_t detail)
     PJ_LOG(3,(THIS_FILE, "Dump complete"));
 }
 
+
+/* Forward declaration. */
+static void restart_listener_cb(void *user_data);
+
+
+static pj_status_t handle_ip_change_on_acc()
+{
+    int i = 0;
+    pj_status_t status = PJ_SUCCESS;
+    pj_bool_t acc_done[PJSUA_MAX_ACC];
+
+    /* Reset ip_change_active flag. */
+    for (; i < (int)PJ_ARRAY_SIZE(pjsua_var.acc); ++i) {
+	pjsua_var.acc[i].ip_change_op = PJSUA_IP_CHANGE_OP_NULL;
+	acc_done[i] = PJ_FALSE;
+    }    
+    
+    for (i = 0; i < (int)PJ_ARRAY_SIZE(pjsua_var.acc); ++i) {
+	pj_bool_t shutdown_transport = PJ_FALSE;
+	pjsip_regc_info regc_info;
+	char acc_id[PJSUA_MAX_ACC * 4];
+	pjsua_acc *acc = &pjsua_var.acc[i];
+	pjsip_transport *transport = NULL;
+	pjsua_acc_id shut_acc_ids[PJSUA_MAX_ACC];
+	unsigned shut_acc_cnt = 0;
+
+	if (!acc->valid || (acc_done[i]))
+	    continue;
+
+	if (acc->regc) {	    	    
+	    pjsip_regc_get_info(acc->regc, &regc_info);
+	    if ((regc_info.transport) &&
+		((regc_info.transport->flag & PJSIP_TRANSPORT_DATAGRAM) == 0))
+	    {
+		transport = regc_info.transport;
+		shutdown_transport = acc->cfg.ip_change_cfg.shutdown_tp;
+		shut_acc_ids[shut_acc_cnt++] = acc->index;
+	    }	
+	} else if (acc->reg_last_code != PJSIP_SC_BAD_GATEWAY &&
+		   acc->reg_last_code != PJSIP_SC_REQUEST_TIMEOUT &&
+		   acc->reg_last_code != PJSIP_SC_INTERNAL_SERVER_ERROR &&
+		   acc->reg_last_code != PJSIP_SC_BAD_GATEWAY &&
+		   acc->reg_last_code != PJSIP_SC_SERVICE_UNAVAILABLE &&
+		   acc->reg_last_code != PJSIP_SC_SERVER_TIMEOUT &&
+		   acc->reg_last_code != PJSIP_SC_TEMPORARILY_UNAVAILABLE) 
+	{
+	    continue;
+	} 
+	pj_ansi_snprintf(acc_id, sizeof(acc_id), "#%d", i);	
+
+	if (transport) {
+	    unsigned j = i + 1;
+
+	    /* Find other account that uses the same transport. */
+	    for (; j < (int)PJ_ARRAY_SIZE(pjsua_var.acc); ++j) {
+		pjsip_regc_info tmp_regc_info;
+		pjsua_acc *next_acc = &pjsua_var.acc[j];
+
+		if (!next_acc->valid || !next_acc->regc ||
+		    (next_acc->ip_change_op > PJSUA_IP_CHANGE_OP_NULL)) 
+		{
+		    continue;
+		}
+
+		pjsip_regc_get_info(next_acc->regc, &tmp_regc_info);
+		if (transport == tmp_regc_info.transport) {
+                    char tmp_buf[PJSUA_MAX_ACC * 4];
+
+                    pj_ansi_strncpy(tmp_buf, acc_id, sizeof(acc_id));
+		    pj_ansi_snprintf(acc_id, sizeof(acc_id), "%s #%d", 
+				     tmp_buf, j);
+		    shut_acc_ids[shut_acc_cnt++] = j;
+		    if (!shutdown_transport) {
+			shutdown_transport =
+				    next_acc->cfg.ip_change_cfg.shutdown_tp;			    
+		    }
+		}
+	    }
+	}
+
+	if (shutdown_transport) {
+	    unsigned j;
+	    /* Shutdown the transport. */	    
+	    PJ_LOG(3, (THIS_FILE, "Shutdown transport %s used by account %s "
+		       "triggered by IP change", transport->obj_name, acc_id));
+
+	    for (j = 0; j < shut_acc_cnt; ++j) {
+		pjsua_acc *tmp_acc = &pjsua_var.acc[shut_acc_ids[j]];
+		tmp_acc->ip_change_op = PJSUA_IP_CHANGE_OP_ACC_SHUTDOWN_TP;
+		acc_done[shut_acc_ids[j]] = PJ_TRUE;
+	    }
+
+	    status = pjsip_transport_shutdown2(transport, PJ_TRUE);
+
+	    /* Report progress to each acc which uses the same transport. */
+	    for (j = 0; j < shut_acc_cnt; ++j) {
+		pjsua_acc *tmp_acc = &pjsua_var.acc[shut_acc_ids[j]];
+
+		if (pjsua_var.ua_cfg.cb.on_ip_change_progress) {
+		    pjsua_ip_change_op_info info;
+
+		    pj_bzero(&info, sizeof(info));
+		    info.acc_shutdown_tp.acc_id = tmp_acc->index;
+
+		    pjsua_var.ua_cfg.cb.on_ip_change_progress(
+							 tmp_acc->ip_change_op,
+							 status,
+							 &info);
+		}
+
+	    }
+	} else {
+	    acc_done[i] = PJ_TRUE;
+	    if (acc->cfg.allow_contact_rewrite) {
+		status = pjsua_acc_update_contact_on_ip_change(acc);
+	    } else {
+		status = pjsua_acc_handle_call_on_ip_change(acc);
+	    }
+	}
+    }
+    return status;
+}
+
+
+static pj_status_t restart_listener(pjsua_transport_id id, 
+				    unsigned restart_lis_delay)
+{
+    pj_sockaddr bind_addr;
+    pjsua_transport_info tp_info;
+    pj_status_t status;    
+
+    pjsua_transport_get_info(id, &tp_info);        
+    pj_sockaddr_init(pjsip_transport_type_get_af(tp_info.type),
+		     &bind_addr,
+		     NULL,
+		     pj_sockaddr_get_port(&tp_info.local_addr));
+    
+    switch (tp_info.type) {
+    case PJSIP_TRANSPORT_UDP:
+    case PJSIP_TRANSPORT_UDP6:
+	status = pjsip_udp_transport_restart2(
+				       pjsua_var.tpdata[id].data.tp,
+				       PJSIP_UDP_TRANSPORT_DESTROY_SOCKET,
+				       PJ_INVALID_SOCKET,
+				       &bind_addr,
+				       NULL);
+	break;
+
+#if defined(PJSIP_HAS_TLS_TRANSPORT) && PJSIP_HAS_TLS_TRANSPORT!=0
+    case PJSIP_TRANSPORT_TLS:
+    case PJSIP_TRANSPORT_TLS6:
+	status = pjsip_tls_transport_restart(
+					pjsua_var.tpdata[id].data.factory,
+					&bind_addr,
+					NULL);
+	break;
+#endif
+    case PJSIP_TRANSPORT_TCP:
+    case PJSIP_TRANSPORT_TCP6:
+	status = pjsip_tcp_transport_restart(
+					pjsua_var.tpdata[id].data.factory,
+					&bind_addr,
+					NULL);
+	break;
+
+    default:
+	status = PJ_EINVAL;
+    }
+    if (status != PJ_SUCCESS && (restart_lis_delay > 0)) {
+	/* Try restarting again, with delay. */
+	pjsua_schedule_timer2(&restart_listener_cb, 
+			      (void*)(pj_size_t)id, 
+			      restart_lis_delay);
+    } else {
+	int i = 0;
+	pj_bool_t all_done = PJ_TRUE;
+
+	pjsua_var.tpdata[id].is_restarting = PJ_FALSE;	
+	if (pjsua_var.ua_cfg.cb.on_ip_change_progress) {
+	    pjsua_ip_change_op_info info;
+
+	    pj_bzero(&info, sizeof(info));
+	    info.lis_restart.transport_id = id;
+	    pjsua_var.ua_cfg.cb.on_ip_change_progress(
+						PJSUA_IP_CHANGE_OP_RESTART_LIS, 
+						status, 
+						&info);
+	}
+
+	/* Move forward if all listener has been restarted. */
+	for (; i < PJ_ARRAY_SIZE(pjsua_var.tpdata); ++i) {
+	    if (pjsua_var.tpdata[i].data.ptr != NULL && 
+		pjsua_var.tpdata[i].is_restarting) 
+	    {
+		all_done = PJ_FALSE;
+		break;
+	    }
+	}
+	if (all_done)
+	    status = handle_ip_change_on_acc();
+    }
+    return status;
+}
+
+
+static void restart_listener_cb(void *user_data)
+{
+    pjsua_transport_id transport_id = (pjsua_transport_id)(pj_size_t)user_data;
+    restart_listener(transport_id, 0);
+}
+
+
+PJ_DEF(pj_status_t) pjsua_handle_ip_change(const pjsua_ip_change_param *param)
+{
+    pj_status_t status = PJ_SUCCESS;
+    int i = 0;
+
+    PJ_ASSERT_RETURN(param, PJ_EINVAL);
+
+    PJ_LOG(3, (THIS_FILE, "Start handling IP address change"));
+    
+    if (param->restart_listener) {
+	/* Restart listener/transport, handle_ip_change_on_acc() will
+	 * be called after listener restart is completed successfully.
+	 */
+	for (i = 0; i < PJ_ARRAY_SIZE(pjsua_var.tpdata); ++i) {
+	    if (pjsua_var.tpdata[i].data.ptr != NULL) {
+		pjsua_var.tpdata[i].is_restarting = PJ_TRUE;
+	    }
+	}
+	for (i = 0; i < PJ_ARRAY_SIZE(pjsua_var.tpdata); ++i) {
+	    if (pjsua_var.tpdata[i].data.ptr != NULL) {		
+		status = restart_listener(i, param->restart_lis_delay);
+	    }
+	}
+    } else {
+	status = handle_ip_change_on_acc();
+    }
+
+    return status;
+}

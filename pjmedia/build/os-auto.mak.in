@@ -71,6 +71,7 @@ AC_NO_G722_CODEC=@ac_no_g722_codec@
 AC_NO_G7221_CODEC=@ac_no_g7221_codec@
 AC_NO_OPENCORE_AMRNB=@ac_no_opencore_amrnb@
 AC_NO_OPENCORE_AMRWB=@ac_no_opencore_amrwb@
+AC_NO_BCG729=@ac_no_bcg729@
 
 export CODEC_OBJS=
 
@@ -100,7 +101,7 @@ else
 export CFLAGS += -I$(THIRD_PARTY)/build/speex -I$(THIRD_PARTY)/speex/include
 export CODEC_OBJS += speex_codec.o
 
-ifneq (@ac_no_speex_aec@,1)
+ifeq (@ac_no_speex_aec@,)
 export PJMEDIA_OBJS += echo_speex.o
 endif
 
@@ -139,13 +140,17 @@ export CODEC_OBJS += opencore_amr.o
 endif
 endif
 
+ifeq ($(AC_NO_BCG729),)
+export CODEC_OBJS += bcg729.o
+endif
+
 
 #
 # SRTP
 #
-ifeq (@ac_external_srtp@,1)
+ifneq (@ac_external_srtp@,0)
 # External SRTP
-export CFLAGS += -DPJMEDIA_EXTERNAL_SRTP=1
+export CFLAGS += -DPJMEDIA_EXTERNAL_SRTP=@ac_external_srtp@
 # SRTP srtp_deinit()/srtp_shutdown() API availability settings
 export CFLAGS += -DPJMEDIA_SRTP_HAS_DEINIT=@ac_srtp_deinit_present@ \
 		 -DPJMEDIA_SRTP_HAS_SHUTDOWN=@ac_srtp_shutdown_present@
@@ -272,6 +277,13 @@ endif
 #
 ifeq ($(AC_PJMEDIA_VIDEO_HAS_DARWIN),yes)
 export PJMEDIA_VIDEODEV_OBJS += darwin_dev.o
+endif
+
+#
+# VideoToolbox codec
+#
+ifeq ($(AC_PJMEDIA_VIDEO_HAS_VTOOLBOX),yes)
+export CODEC_OBJS += vid_toolbox.o
 endif
 
 #

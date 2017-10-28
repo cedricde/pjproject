@@ -153,6 +153,8 @@ typedef enum pjsua_sip_timer_use {PJSUA_SIP_TIMER_INACTIVE, PJSUA_SIP_TIMER_OPTI
 
 typedef enum pjsua_ipv6_use {PJSUA_IPV6_DISABLED, PJSUA_IPV6_ENABLED} pjsua_ipv6_use;
 
+typedef enum pjsua_nat64_opt {PJSUA_NAT64_DISABLED, PJSUA_NAT64_ENABLED} pjsua_nat64_opt;
+
 typedef enum pjsua_buddy_status {PJSUA_BUDDY_STATUS_UNKNOWN, PJSUA_BUDDY_STATUS_ONLINE, PJSUA_BUDDY_STATUS_OFFLINE} pjsua_buddy_status;
 
 typedef enum pjsua_call_media_status {PJSUA_CALL_MEDIA_NONE, PJSUA_CALL_MEDIA_ACTIVE, PJSUA_CALL_MEDIA_LOCAL_HOLD, PJSUA_CALL_MEDIA_REMOTE_HOLD, PJSUA_CALL_MEDIA_ERROR} pjsua_call_media_status;
@@ -172,4 +174,6 @@ typedef enum pjsua_call_flag {PJSUA_CALL_UNHOLD = 1, PJSUA_CALL_UPDATE_CONTACT =
 typedef enum pjsua_create_media_transport_flag {PJSUA_MED_TP_CLOSE_MEMBER = 1} pjsua_create_media_transport_flag;
 
 typedef enum pjsua_snd_dev_mode {PJSUA_SND_DEV_SPEAKER_ONLY = 1, PJSUA_SND_DEV_NO_IMMEDIATE_OPEN = 2} pjsua_snd_dev_mode;
+
+typedef enum pjsua_ip_change_op {PJSUA_IP_CHANGE_OP_NULL, PJSUA_IP_CHANGE_OP_RESTART_LIS, PJSUA_IP_CHANGE_OP_ACC_SHUTDOWN_TP, PJSUA_IP_CHANGE_OP_ACC_UPDATE_CONTACT, PJSUA_IP_CHANGE_OP_ACC_HANGUP_CALLS, PJSUA_IP_CHANGE_OP_ACC_REINVITE_CALLS} pjsua_ip_change_op;
 

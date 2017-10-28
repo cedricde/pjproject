@@ -168,6 +168,11 @@ typedef struct pj_ice_strans_comp
     unsigned		 cand_cnt;	/**< # of candidates/aliaes.	*/
     pj_ice_sess_cand	 cand_list[PJ_ICE_ST_MAX_CAND];	/**< Cand array	*/
 
+    pj_bool_t		 ipv4_mapped;   /**< Is IPv6 addr mapped to IPv4?*/
+    pj_sockaddr		 dst_addr;	/**< Destination address	*/
+    pj_sockaddr		 synth_addr;	/**< Synthesized dest address	*/
+    unsigned 		 synth_addr_len;/**< Synthesized dest addr len  */
+
     unsigned		 default_cand;	/**< Default candidate.		*/
 
 } pj_ice_strans_comp;
@@ -231,6 +236,7 @@ PJ_DEF(void) pj_ice_strans_cfg_default(pj_ice_strans_cfg *cfg)
 {
     pj_bzero(cfg, sizeof(*cfg));
 
+    cfg->af = pj_AF_INET();
     pj_stun_config_init(&cfg->stun_cfg, NULL, 0, NULL, NULL);
     pj_ice_strans_stun_cfg_default(&cfg->stun);
     pj_ice_strans_turn_cfg_default(&cfg->turn);
@@ -345,7 +351,12 @@ static pj_status_t add_update_turn(pj_ice_strans *ice_st,
 	    for (i=0; i<comp->cand_cnt; ++i) {
 		if (comp->cand_list[i].type == PJ_ICE_CAND_TYPE_SRFLX) {
 		    comp->default_cand = i;
-		    break;
+		    if (ice_st->cfg.af == pj_AF_UNSPEC() ||
+		        comp->cand_list[i].base_addr.addr.sa_family ==
+		        ice_st->cfg.af)
+		    {
+		        break;
+		    }
 		}
 	    }
 	}
@@ -547,7 +558,13 @@ static pj_status_t add_stun_and_host(pj_ice_strans *ice_st,
 	comp->cand_cnt++;
 
 	/* Set default candidate to srflx */
-	comp->default_cand = (unsigned)(cand - comp->cand_list);
+	if (comp->cand_list[comp->default_cand].type != PJ_ICE_CAND_TYPE_SRFLX
+	    || (ice_st->cfg.af != pj_AF_UNSPEC() &&
+	        comp->cand_list[comp->default_cand].base_addr.addr.sa_family
+	        != ice_st->cfg.af))
+	{
+	    comp->default_cand = (unsigned)(cand - comp->cand_list);
+	}
 
 	pj_log_pop_indent();
     }
@@ -637,6 +654,17 @@ static pj_status_t add_stun_and_host(pj_ice_strans *ice_st,
             
 	    pj_ice_calc_foundation(ice_st->pool, &cand->foundation,
 				   cand->type, &cand->base_addr);
+
+	    /* Set default candidate with the preferred default
+	     * address family
+	     */
+	    if (comp->ice_st->cfg.af != pj_AF_UNSPEC() &&
+	        addr->addr.sa_family == comp->ice_st->cfg.af &&
+	        comp->cand_list[comp->default_cand].base_addr.addr.sa_family !=
+	        ice_st->cfg.af)
+	    {
+	        comp->default_cand = (unsigned)(cand - comp->cand_list);
+	    }
 
 	    PJ_LOG(4,(ice_st->obj_name,
 		      "Comp %d/%d: host candidate %s (tpid=%d) added",
@@ -840,6 +868,10 @@ static void destroy_ice_st(pj_ice_strans *ice_st)
 	      ice_st));
     pj_log_push_indent();
 
+    /* Reset callback and user data */
+    pj_bzero(&ice_st->cb, sizeof(ice_st->cb));
+    ice_st->user_data = NULL;
+
     pj_grp_lock_acquire(ice_st->grp_lock);
 
     if (ice_st->destroy_req) {
@@ -932,8 +964,8 @@ static void sess_init_update(pj_ice_strans *ice_st)
 {
     unsigned i;
 
-    /* Ignore if init callback has been called */
-    if (ice_st->cb_called)
+    /* Ignore if ICE is destroying or init callback has been called */
+    if (ice_st->destroy_req || ice_st->cb_called)
 	return;
 
     /* Notify application when all candidates have been gathered */
@@ -1107,6 +1139,15 @@ PJ_DEF(pj_status_t) pj_ice_strans_init_ice(pj_ice_strans *ice_st,
 
 	    /* Must have address */
 	    pj_assert(pj_sockaddr_has_addr(&cand->addr));
+
+	    /* Skip if we are mapped to IPv4 address and this candidate
+	     * is not IPv4.
+	     */
+	    if (comp->ipv4_mapped &&
+	        cand->addr.addr.sa_family != pj_AF_INET())
+	    {
+	    	continue;
+	    }
 
 	    /* Add the candidate */
 	    status = pj_ice_sess_add_cand(ice_st->ice, comp->comp_id,
@@ -1474,9 +1515,33 @@ PJ_DEF(pj_status_t) pj_ice_strans_sendto( pj_ice_strans *ice_st,
 	    return (status==PJ_SUCCESS||status==PJ_EPENDING) ?
 		    PJ_SUCCESS : status;
 	} else {
+    	    const pj_sockaddr_t *dest_addr;
+    	    unsigned dest_addr_len;
+
+    	    if (comp->ipv4_mapped) {
+    	    	if (comp->synth_addr_len == 0 ||
+    	    	    pj_sockaddr_cmp(&comp->dst_addr, dst_addr) != 0)
+    	    	{
+    	    	    status = pj_sockaddr_synthesize(pj_AF_INET6(),
+    	    					    &comp->synth_addr,
+    	    					    dst_addr);
+    	    	    if (status != PJ_SUCCESS)
+    	            	return status;
+
+    	    	    pj_sockaddr_cp(&comp->dst_addr, dst_addr);
+    	    	    comp->synth_addr_len = pj_sockaddr_get_len(
+    	    	    			       &comp->synth_addr);
+    	    	}
+	    	dest_addr = &comp->synth_addr;
+    	    	dest_addr_len = comp->synth_addr_len;
+    	    } else {
+    		dest_addr = dst_addr;
+    		dest_addr_len = dst_addr_len;
+    	    }
+
 	    status = pj_stun_sock_sendto(comp->stun[tp_idx].sock, NULL, data,
-					 (unsigned)data_len, 0, dst_addr,
-					 dst_addr_len);
+					 (unsigned)data_len, 0, dest_addr,
+					 dest_addr_len);
 	    return (status==PJ_SUCCESS||status==PJ_EPENDING) ?
 		    PJ_SUCCESS : status;
 	}
@@ -1494,6 +1559,7 @@ static void on_ice_complete(pj_ice_sess *ice, pj_status_t status)
     pj_ice_strans *ice_st = (pj_ice_strans*)ice->user_data;
     pj_time_val t;
     unsigned msec;
+    pj_ice_strans_cb cb = ice_st->cb;
 
     pj_grp_lock_add_ref(ice_st->grp_lock);
 
@@ -1501,7 +1567,7 @@ static void on_ice_complete(pj_ice_sess *ice, pj_status_t status)
     PJ_TIME_VAL_SUB(t, ice_st->start_time);
     msec = PJ_TIME_VAL_MSEC(t);
 
-    if (ice_st->cb.on_ice_complete) {
+    if (cb.on_ice_complete) {
 	if (status != PJ_SUCCESS) {
 	    char errmsg[PJ_ERR_MSG_SIZE];
 	    pj_strerror(status, errmsg, sizeof(errmsg));
@@ -1574,8 +1640,7 @@ static void on_ice_complete(pj_ice_sess *ice, pj_status_t status)
 					       PJ_ICE_STRANS_STATE_FAILED;
 
 	pj_log_push_indent();
-	(*ice_st->cb.on_ice_complete)(ice_st, PJ_ICE_STRANS_OP_NEGOTIATION,
-				      status);
+	(*cb.on_ice_complete)(ice_st, PJ_ICE_STRANS_OP_NEGOTIATION, status);
 	pj_log_pop_indent();
 
     }
@@ -1623,9 +1688,31 @@ static pj_status_t ice_tx_pkt(pj_ice_sess *ice,
 	    status = PJ_EINVALIDOP;
 	}
     } else if (tp_typ == TP_STUN) {
+    	const pj_sockaddr_t *dest_addr;
+    	unsigned dest_addr_len;
+
+    	if (comp->ipv4_mapped) {
+    	    if (comp->synth_addr_len == 0 ||
+    	    	pj_sockaddr_cmp(&comp->dst_addr, dst_addr) != 0)
+    	    {
+    	    	status = pj_sockaddr_synthesize(pj_AF_INET6(),
+    	    					&comp->synth_addr, dst_addr);
+    	    	if (status != PJ_SUCCESS)
+    	    	    return status;
+    	    
+    	    	pj_sockaddr_cp(&comp->dst_addr, dst_addr);
+    	    	comp->synth_addr_len = pj_sockaddr_get_len(&comp->synth_addr);
+    	    }
+	    dest_addr = &comp->synth_addr;
+    	    dest_addr_len = comp->synth_addr_len;
+    	} else {
+    	    dest_addr = dst_addr;
+    	    dest_addr_len = dst_addr_len;
+    	}
+
 	status = pj_stun_sock_sendto(comp->stun[tp_idx].sock, NULL,
 				     pkt, (unsigned)size, 0,
-				     dst_addr, dst_addr_len);
+				     dest_addr, dest_addr_len);
     } else {
 	pj_assert(!"Invalid transport ID");
 	status = PJ_EINVALIDOP;
@@ -1793,6 +1880,41 @@ static pj_bool_t stun_on_status(pj_stun_sock *stun_sock,
 				    "srflx address changed";
 		pj_bool_t dup = PJ_FALSE;
 
+		if (info.mapped_addr.addr.sa_family == pj_AF_INET() &&
+		    cand->base_addr.addr.sa_family == pj_AF_INET6())
+		{
+		    /* We get an IPv4 mapped address for our IPv6
+		     * host address.
+		     */		     
+		    comp->ipv4_mapped = PJ_TRUE;
+
+		    /* Find other host candidates with the same (IPv6)
+		     * address, and replace it with the new (IPv4)
+		     * mapped address.
+		     */
+		    for (i = 0; i < comp->cand_cnt; ++i) {
+		        pj_sockaddr *a1, *a2;
+
+		        if (comp->cand_list[i].type != PJ_ICE_CAND_TYPE_HOST)
+		            continue;
+		        
+		        a1 = &comp->cand_list[i].addr;
+		        a2 = &cand->base_addr;
+		        if (pj_memcmp(pj_sockaddr_get_addr(a1),
+		       		      pj_sockaddr_get_addr(a2),
+		       		      pj_sockaddr_get_addr_len(a1)) == 0)
+		       	{
+		       	    pj_uint16_t port = pj_sockaddr_get_port(a1);
+		       	    pj_sockaddr_cp(a1, &info.mapped_addr);
+		       	    if (port != pj_sockaddr_get_port(a2))
+		       	        pj_sockaddr_set_port(a1, port);
+		       	    pj_sockaddr_cp(&comp->cand_list[i].base_addr, a1);
+		       	}
+		    }
+		    pj_sockaddr_cp(&cand->base_addr, &info.mapped_addr);
+		    pj_sockaddr_cp(&cand->rel_addr, &info.mapped_addr);
+		}
+		
 		/* Eliminate the srflx candidate if the address is
 		 * equal to other (host) candidates.
 		 */
@@ -2003,11 +2125,18 @@ static void turn_on_state(pj_turn_sock *turn_sock, pj_turn_state_t old_state,
 	cand->status = PJ_SUCCESS;
 
 	/* Set default candidate to relay */
-	comp->default_cand = (unsigned)(cand - comp->cand_list);
+	if (comp->cand_list[comp->default_cand].type!=PJ_ICE_CAND_TYPE_RELAYED
+	    || (comp->ice_st->cfg.af != pj_AF_UNSPEC() &&
+	        comp->cand_list[comp->default_cand].addr.addr.sa_family
+	        != comp->ice_st->cfg.af))
+	{
+	    comp->default_cand = (unsigned)(cand - comp->cand_list);
+	}
 
 	/* Prefer IPv4 relay as default candidate for better connectivity
 	 * with IPv4 endpoints.
 	 */
+	/*
 	if (cand->addr.addr.sa_family != pj_AF_INET()) {
 	    for (i=0; i<comp->cand_cnt; ++i) {
 		if (comp->cand_list[i].type == PJ_ICE_CAND_TYPE_RELAYED &&
@@ -2019,6 +2148,7 @@ static void turn_on_state(pj_turn_sock *turn_sock, pj_turn_state_t old_state,
 		}
 	    }
 	}
+	*/
 
 	PJ_LOG(4,(comp->ice_st->obj_name,
 		  "Comp %d/%d: TURN allocation (tpid=%d) complete, "

@@ -51,7 +51,6 @@
 #include <openssl/err.h>
 #include <openssl/x509v3.h>
 #include <openssl/rand.h>
-#include <openssl/engine.h>
 #include <openssl/opensslconf.h>
 
 #if !defined(OPENSSL_NO_EC) && OPENSSL_VERSION_NUMBER >= 0x1000200fL
@@ -116,6 +115,10 @@ static unsigned get_nid_from_cid(unsigned cid)
 #  define OPENSSL_NO_SSL2	    /* seems to be removed in 1.1.0 */
 #  define M_ASN1_STRING_data(x)	    ASN1_STRING_get0_data(x)
 #  define M_ASN1_STRING_length(x)   ASN1_STRING_length(x)
+#  if defined(OPENSSL_API_COMPAT) && OPENSSL_API_COMPAT >= 0x10100000L
+#     define X509_get_notBefore(x)  X509_get0_notBefore(x)
+#     define X509_get_notAfter(x)   X509_get0_notAfter(x)
+#  endif
 #else
 #  define SSL_CIPHER_get_id(c)	    (c)->id
 #  define SSL_set_session(ssl, s)   (ssl)->session = (s)
@@ -123,9 +126,15 @@ static unsigned get_nid_from_cid(unsigned cid)
 
 
 #ifdef _MSC_VER
-#  pragma comment( lib, "libeay32")
-#  pragma comment( lib, "ssleay32")
-#  pragma comment( lib, "crypt32")
+#  if OPENSSL_VERSION_NUMBER >= 0x10100000L
+#    pragma comment(lib, "libcrypto")
+#    pragma comment(lib, "libssl")
+#    pragma comment(lib, "crypt32")
+#  else
+#    pragma comment(lib, "libeay32")
+#    pragma comment(lib, "ssleay32")
+#  endif
+#  define strerror_r(errno,buf,len) strerror_s(buf,len,errno)
 #endif
 
 
@@ -144,7 +153,8 @@ static unsigned get_nid_from_cid(unsigned cid)
 enum ssl_state {
     SSL_STATE_NULL,
     SSL_STATE_HANDSHAKING,
-    SSL_STATE_ESTABLISHED
+    SSL_STATE_ESTABLISHED,
+    SSL_STATE_ERROR
 };
 
 /*
@@ -291,14 +301,104 @@ static pj_status_t flush_delayed_send(pj_ssl_sock_t *ssock);
 /* Expected maximum value of reason component in OpenSSL error code */
 #define MAX_OSSL_ERR_REASON		1200
 
-static pj_status_t STATUS_FROM_SSL_ERR(pj_ssl_sock_t *ssock,
-				       unsigned long err)
+
+static char *SSLErrorString (int err)
+{
+    switch (err) {
+    case SSL_ERROR_NONE:
+	return "SSL_ERROR_NONE";
+    case SSL_ERROR_ZERO_RETURN:
+	return "SSL_ERROR_ZERO_RETURN";
+    case SSL_ERROR_WANT_READ:
+	return "SSL_ERROR_WANT_READ";
+    case SSL_ERROR_WANT_WRITE:
+	return "SSL_ERROR_WANT_WRITE";
+    case SSL_ERROR_WANT_CONNECT:
+	return "SSL_ERROR_WANT_CONNECT";
+    case SSL_ERROR_WANT_ACCEPT:
+	return "SSL_ERROR_WANT_ACCEPT";
+    case SSL_ERROR_WANT_X509_LOOKUP:
+	return "SSL_ERROR_WANT_X509_LOOKUP";
+    case SSL_ERROR_SYSCALL:
+	return "SSL_ERROR_SYSCALL";
+    case SSL_ERROR_SSL:
+	return "SSL_ERROR_SSL";
+    default:
+	return "SSL_ERROR_UNKNOWN";
+    }
+}
+
+#define ERROR_LOG(msg, err) \
+    PJ_LOG(2,("SSL", "%s (%s): Level: %d err: <%lu> <%s-%s-%s> len: %d", \
+	      msg, action, level, err, \
+	      (ERR_lib_error_string(err)? ERR_lib_error_string(err): "???"), \
+	      (ERR_func_error_string(err)? ERR_func_error_string(err):"???"),\
+	      (ERR_reason_error_string(err)? \
+	       ERR_reason_error_string(err): "???"), len));
+
+static void SSLLogErrors(char * action, int ret, int ssl_err, int len)
+{
+    char *ssl_err_str = SSLErrorString(ssl_err);
+
+    if (!action) {
+	action = "UNKNOWN";
+    }
+
+    switch (ssl_err) {
+    case SSL_ERROR_SYSCALL:
+    {
+	unsigned long err2 = ERR_get_error();
+	if (err2) {
+	    int level = 0;
+	    while (err2) {
+	        ERROR_LOG("SSL_ERROR_SYSCALL", err2);
+		level++;
+		err2 = ERR_get_error();
+	    }
+	} else if (ret == 0) {
+	    /* An EOF was observed that violates the protocol */
+
+	    /* The TLS/SSL handshake was not successful but was shut down
+	     * controlled and by the specifications of the TLS/SSL protocol.
+	     */
+	} else if (ret == -1) {
+	    /* BIO error - look for more info in errno... */
+	    char errStr[250] = "";
+	    strerror_r(errno, errStr, sizeof(errStr));
+	    /* for now - continue logging these if they occur.... */
+	    PJ_LOG(4,("SSL", "BIO error, SSL_ERROR_SYSCALL (%s): "
+	    		     "errno: <%d> <%s> len: %d",
+		      	     action, errno, errStr, len));
+	} else {
+	    /* ret!=0 & ret!=-1 & nothing on error stack - is this valid??? */
+	    PJ_LOG(2,("SSL", "SSL_ERROR_SYSCALL (%s) ret: %d len: %d",
+		      action, ret, len));
+	}
+	break;
+    }
+    case SSL_ERROR_SSL:
+    {
+	unsigned long err2 = ERR_get_error();
+	int level = 0;
+
+	while (err2) {
+	    ERROR_LOG("SSL_ERROR_SSL", err2);
+	    level++;
+	    err2 = ERR_get_error();
+	}
+	break;
+    }
+    default:
+	PJ_LOG(2,("SSL", "%lu [%s] (%s) ret: %d len: %d",
+		  ssl_err, ssl_err_str, action, ret, len));
+	break;
+    }
+}
+
+
+static pj_status_t GET_STATUS_FROM_SSL_ERR(unsigned long err)
 {
     pj_status_t status;
-
-    /* General SSL error, dig more from OpenSSL error queue */
-    if (err == SSL_ERROR_SSL)
-	err = ERR_get_error();
 
     /* OpenSSL error range is much wider than PJLIB errno space, so
      * if it exceeds the space, only the error reason will be kept.
@@ -310,13 +410,49 @@ static pj_status_t STATUS_FROM_SSL_ERR(pj_ssl_sock_t *ssock,
 	status = ERR_GET_REASON(err);
 
     status += PJ_SSL_ERRNO_START;
-    ssock->last_err = err;
     return status;
+}
+
+/* err contains ERR_get_error() status */
+static pj_status_t STATUS_FROM_SSL_ERR(char *action, pj_ssl_sock_t *ssock,
+				       unsigned long err)
+{
+    int level = 0;
+    int len = 0; //dummy
+
+    ERROR_LOG("STATUS_FROM_SSL_ERR", err);
+    level++;
+
+    /* General SSL error, dig more from OpenSSL error queue */
+    if (err == SSL_ERROR_SSL) {
+	err = ERR_get_error();
+	ERROR_LOG("STATUS_FROM_SSL_ERR", err);
+    }
+
+    ssock->last_err = err;
+    return GET_STATUS_FROM_SSL_ERR(err);
+}
+
+/* err contains SSL_get_error() status */
+static pj_status_t STATUS_FROM_SSL_ERR2(char *action, pj_ssl_sock_t *ssock,
+					int ret, int err, int len)
+{
+    unsigned long ssl_err = err;
+
+    if (err == SSL_ERROR_SSL) {
+	ssl_err = ERR_peek_error();
+    }
+
+    /* Dig for more from OpenSSL error queue */
+    SSLLogErrors(action, ret, err, len);
+
+    ssock->last_err = ssl_err;
+    return GET_STATUS_FROM_SSL_ERR(ssl_err);
 }
 
 static pj_status_t GET_SSL_STATUS(pj_ssl_sock_t *ssock)
 {
-    return STATUS_FROM_SSL_ERR(ssock, ERR_get_error());
+    return STATUS_FROM_SSL_ERR("status", ssock, ERR_get_error());
 }
 
 
@@ -399,8 +535,12 @@ static pj_status_t init_openssl(void)
     pj_assert(status == PJ_SUCCESS);
 
     /* Init OpenSSL lib */
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
     SSL_library_init();
     SSL_load_error_strings();
+#else
+    OPENSSL_init_ssl(0, NULL);
+#endif
 #if OPENSSL_VERSION_NUMBER < 0x009080ffL
     /* This is now synonym of SSL_library_init() */
     OpenSSL_add_all_algorithms();
@@ -416,6 +556,7 @@ static pj_status_t init_openssl(void)
 	int nid;
 	const char *cname;
 
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 	meth = (SSL_METHOD*)SSLv23_server_method();
 	if (!meth)
 	    meth = (SSL_METHOD*)TLSv1_server_method();
@@ -427,6 +568,12 @@ static pj_status_t init_openssl(void)
 	if (!meth)
 	    meth = (SSL_METHOD*)SSLv2_server_method();
 #endif
+
+#else
+	/* Specific version methods are deprecated in 1.1.0 */
+	meth = (SSL_METHOD*)TLS_method();
+#endif
+
 	pj_assert(meth);
 
 	ctx=SSL_CTX_new(meth);
@@ -644,6 +791,7 @@ static pj_status_t create_ssl(pj_ssl_sock_t *ssock)
 	ssock->param.proto = PJ_SSL_SOCK_PROTO_SSL23;
 
     /* Determine SSL method to use */
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
     switch (ssock->param.proto) {
     case PJ_SSL_SOCK_PROTO_TLS1:
 	ssl_method = (SSL_METHOD*)TLSv1_method();
@@ -659,6 +807,10 @@ static pj_status_t create_ssl(pj_ssl_sock_t *ssock)
 #endif
 	break;
     }
+#else
+    /* Specific version methods are deprecated in 1.1.0 */
+    ssl_method = (SSL_METHOD*)TLS_method();
+#endif
 
     if (!ssl_method) {
 	ssl_method = (SSL_METHOD*)SSLv23_method();
@@ -918,7 +1070,14 @@ static void destroy_ssl(pj_ssl_sock_t *ssock)
 {
     /* Destroy SSL instance */
     if (ssock->ossl_ssl) {
-	SSL_shutdown(ssock->ossl_ssl);
+	/**
+	 * Avoid calling SSL_shutdown() if handshake wasn't completed.
+	 * OpenSSL 1.0.2f complains if SSL_shutdown() is called during an
+	 * SSL handshake, while previous versions always return 0.	 
+	 */
+	if (SSL_in_init(ssock->ossl_ssl) == 0) {
+	    SSL_shutdown(ssock->ossl_ssl);
+	}   	
 	SSL_free(ssock->ossl_ssl); /* this will also close BIOs */
 	ssock->ossl_ssl = NULL;
     }
@@ -1491,7 +1650,7 @@ static pj_bool_t on_handshake_complete(pj_ssl_sock_t *ssock,
 		unsigned long err;
 		err = ERR_get_error();
 		if (err != SSL_ERROR_NONE)
-		    status = STATUS_FROM_SSL_ERR(ssock, err);
+		    status = STATUS_FROM_SSL_ERR("connecting", ssock, err);
 	    }
 	    reset_ssl_sock_state(ssock);
 	}
@@ -1810,11 +1969,11 @@ static pj_status_t do_handshake(pj_ssl_sock_t *ssock)
     }
 
     if (err < 0) {
-	err = SSL_get_error(ssock->ossl_ssl, err);
-	if (err != SSL_ERROR_NONE && err != SSL_ERROR_WANT_READ) 
+	int err2 = SSL_get_error(ssock->ossl_ssl, err);
+	if (err2 != SSL_ERROR_NONE && err2 != SSL_ERROR_WANT_READ)
 	{
 	    /* Handshake fails */
-	    status = STATUS_FROM_SSL_ERR(ssock, err);
+	    status = STATUS_FROM_SSL_ERR2("Handshake", ssock, err, err2, 0);
 	    return status;
 	}
     }
@@ -1890,6 +2049,7 @@ static pj_bool_t asock_on_data_read (pj_activesock_t *asock,
 	    read_data_t *buf = *(OFFSET_OF_READ_DATA_PTR(ssock, data));
 	    void *data_ = (pj_int8_t*)buf->data + buf->len;
 	    int size_ = (int)(ssock->read_size - buf->len);
+	    int len = size_;
 
 	    /* SSL_read() may write some data to BIO write when re-negotiation
 	     * is on progress, so let's protect it with write mutex.
@@ -1906,6 +2066,10 @@ static pj_bool_t asock_on_data_read (pj_activesock_t *asock,
 		    if (size_ > 0)
 			buf->len += size_;
     		
+                    if (status != PJ_SUCCESS) {
+                        ssock->ssl_state = SSL_STATE_ERROR;
+                    }
+
 		    ret = (*ssock->param.cb.on_data_read)(ssock, buf->data,
 							  buf->len, status,
 							  &remainder_);
@@ -1938,10 +2102,22 @@ static pj_bool_t asock_on_data_read (pj_activesock_t *asock,
 		 */
 		if (err != SSL_ERROR_NONE && err != SSL_ERROR_WANT_READ)
 		{
-		    /* Reset SSL socket state, then return PJ_FALSE */
-		    status = STATUS_FROM_SSL_ERR(ssock, err);
-		    reset_ssl_sock_state(ssock);
-		    goto on_error;
+		    if (err == SSL_ERROR_SYSCALL && size_ == -1 &&
+			ERR_peek_error() == 0 && errno == 0)
+		    {
+			status = STATUS_FROM_SSL_ERR2("Read", ssock, size_,
+						      err, len);
+			PJ_LOG(4,("SSL", "SSL_read() = -1, with "
+				  	 "SSL_ERROR_SYSCALL, no SSL error, "
+				  	 "and errno = 0 - skip BIO error"));
+		        /* Ignore these errors */
+		    } else {
+		        /* Reset SSL socket state, then return PJ_FALSE */
+		        status = STATUS_FROM_SSL_ERR2("Read", ssock, size_,
+		        			      err, len);
+		        reset_ssl_sock_state(ssock);
+		        goto on_error;
+		    }
 		}
 
 		status = do_handshake(ssock);
@@ -2657,7 +2833,11 @@ PJ_DEF(pj_status_t) pj_ssl_sock_get_info (pj_ssl_sock_t *ssock,
 
 	/* Current cipher */
 	cipher = SSL_get_current_cipher(ssock->ossl_ssl);
-	info->cipher = (SSL_CIPHER_get_id(cipher) & 0x00FFFFFF);
+	if (cipher) {
+	    info->cipher = (SSL_CIPHER_get_id(cipher) & 0x00FFFFFF);
+	} else {
+	    info->cipher = PJ_TLS_UNKNOWN_CIPHER;
+	}
 
 	/* Remote address */
 	pj_sockaddr_cp(&info->remote_addr, &ssock->rem_addr);
@@ -2825,7 +3005,7 @@ static pj_status_t ssl_write(pj_ssl_sock_t *ssock,
 		status = PJ_EBUSY;
 	} else {
 	    /* Some problem occured */
-	    status = STATUS_FROM_SSL_ERR(ssock, err);
+	    status = STATUS_FROM_SSL_ERR2("Write", ssock, nwritten, err, size);
 	}
     } else {
 	/* nwritten < *size, shouldn't happen, unless write BIO cannot hold 

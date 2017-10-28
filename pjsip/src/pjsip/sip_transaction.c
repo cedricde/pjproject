@@ -288,7 +288,8 @@ static pj_status_t create_tsx_key_2543( pj_pool_t *pool,
     host = &rdata->msg_info.via->sent_by.host;
 
     /* Calculate length required. */
-    len_required = 9 +			    /* CSeq number */
+    len_required = method->name.slen +      /* Method */
+                   9 +			    /* CSeq number */
 		   rdata->msg_info.from->tag.slen +   /* From tag. */
 		   rdata->msg_info.cid->id.slen +    /* Call-ID */
 		   host->slen +		    /* Via host. */
@@ -641,8 +642,8 @@ PJ_DEF(unsigned) pjsip_tsx_layer_get_tsx_count(void)
 /*
  * Find a transaction.
  */
-PJ_DEF(pjsip_transaction*) pjsip_tsx_layer_find_tsx( const pj_str_t *key,
-						     pj_bool_t lock )
+static pjsip_transaction* find_tsx( const pj_str_t *key, pj_bool_t lock,
+				    pj_bool_t add_ref )
 {
     pjsip_transaction *tsx;
     pj_uint32_t hval = 0;
@@ -654,7 +655,7 @@ PJ_DEF(pjsip_transaction*) pjsip_tsx_layer_find_tsx( const pj_str_t *key,
     
     /* Prevent the transaction to get deleted before we have chance to lock it.
      */
-    if (tsx && lock)
+    if (tsx)
         pj_grp_lock_add_ref(tsx->grp_lock);
     
     pj_mutex_unlock(mod_tsx_layer.mutex);
@@ -666,12 +667,29 @@ PJ_DEF(pjsip_transaction*) pjsip_tsx_layer_find_tsx( const pj_str_t *key,
     /* Simulate race condition! */
     PJ_RACE_ME(5);
 
-    if (tsx && lock) {
-	pj_grp_lock_acquire(tsx->grp_lock);
-        pj_grp_lock_dec_ref(tsx->grp_lock);
+    if (tsx) {
+	if (lock)
+	    pj_grp_lock_acquire(tsx->grp_lock);
+
+        if (!add_ref)
+            pj_grp_lock_dec_ref(tsx->grp_lock);
     }
 
     return tsx;
+}
+
+
+PJ_DEF(pjsip_transaction*) pjsip_tsx_layer_find_tsx( const pj_str_t *key,
+						     pj_bool_t lock )
+{
+    return find_tsx(key, lock, PJ_FALSE);
+}
+
+
+PJ_DEF(pjsip_transaction*) pjsip_tsx_layer_find_tsx2( const pj_str_t *key,
+						      pj_bool_t add_ref )
+{
+    return find_tsx(key, PJ_FALSE, add_ref);
 }
 
 
@@ -1230,7 +1248,29 @@ static void tsx_set_state( pjsip_transaction *tsx,
 	pjsip_event e;
 	PJSIP_EVENT_INIT_TSX_STATE(e, tsx, event_src_type, event_src,
 				   prev_state);
+
+	/* For timer event, release lock to avoid deadlock.
+	 * This should be safe because:
+	 * 1. The tsx state just switches to TERMINATED or DESTROYED.
+  	 * 2. There should be no other processing taking place. All other
+  	 *    events, such as the ones handled by tsx_on_state_terminated()
+  	 *    should be ignored.
+         * 3. tsx_shutdown() hasn't been called.
+	 * Refer to ticket #2001 (https://trac.pjsip.org/repos/ticket/2001).
+	 */
+	if (event_src_type == PJSIP_EVENT_TIMER &&
+	    (pj_timer_entry *)event_src == &tsx->timeout_timer)
+	{
+	    pj_grp_lock_release(tsx->grp_lock);
+	}
+
 	(*tsx->tsx_user->on_tsx_state)(tsx, &e);
+
+	if (event_src_type == PJSIP_EVENT_TIMER &&
+	    (pj_timer_entry *)event_src == &tsx->timeout_timer)
+	{
+	    pj_grp_lock_acquire(tsx->grp_lock);
+	}
     }
     
 
@@ -1808,8 +1848,12 @@ static void send_msg_callback( pjsip_send_state *send_state,
     {
 	*cont = PJ_FALSE;
 
-	/* Decrease pending send counter */
-	pj_grp_lock_dec_ref(tsx->grp_lock);
+	/* Decrease pending send counter, but only if the transaction layer
+	 * hasn't been shutdown.
+	 */
+	if (mod_tsx_layer.mod.id >= 0)
+	    pj_grp_lock_dec_ref(tsx->grp_lock);
+
 	return;
     }
 

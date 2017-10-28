@@ -38,6 +38,7 @@
 #define CMD_NETWORK		    900
 #define CMD_QUIT		    110
 #define CMD_RESTART		    120
+#define CMD_HANDLE_IP_CHANGE	    130
 
 /* call level 2 command */
 #define CMD_CALL_NEW		    ((CMD_CALL*10)+1)
@@ -2174,7 +2175,7 @@ static pj_status_t cmd_video_acc_handler(pj_cli_cmd_val *cval)
     case CMD_VIDEO_ACC_CAP_ID:
     case CMD_VIDEO_ACC_REN_ID:
 	{
-	    int dev = pj_strtol(&cval->argv[1]);
+	    int dev = (int)pj_strtol(&cval->argv[1]);
 
 	    if (cmd_id == CMD_VIDEO_ACC_CAP_ID)
 		acc_cfg.vid_cap_dev = dev;
@@ -2203,7 +2204,7 @@ static pj_status_t cmd_enable_vid_rx(pj_cli_cmd_val *cval)
 
     pjsua_call_vid_strm_op_param_default(&param);
 
-    param.med_idx = pj_strtol(&cval->argv[2]);
+    param.med_idx = (int)pj_strtol(&cval->argv[2]);
     if (pjsua_call_get_stream_info(current_call, param.med_idx, &si) ||
 	si.type != PJMEDIA_TYPE_VIDEO)
     {
@@ -2231,7 +2232,7 @@ static pj_status_t cmd_enable_vid_tx(pj_cli_cmd_val *cval)
 
     pjsua_call_vid_strm_op_param_default(&param);
 
-    param.med_idx = pj_strtol(&cval->argv[2]);
+    param.med_idx = (int)pj_strtol(&cval->argv[2]);
 
     status = pjsua_call_set_vid_strm(current_call, op, &param);
     return status;
@@ -2246,7 +2247,8 @@ static pj_status_t cmd_enable_vid_stream(pj_cli_cmd_val *cval,
 
     pjsua_call_vid_strm_op_param_default(&param);
 
-    param.med_idx = cval->argc > 1 ? pj_strtol(&cval->argv[1]) : -1;
+    param.med_idx = cval->argc > 1 ?
+                    (int)pj_strtol(&cval->argv[1]) : -1;
     param.dir = PJMEDIA_DIR_ENCODING_DECODING;
     return pjsua_call_set_vid_strm(current_call, op, &param);
 }
@@ -2256,9 +2258,11 @@ static pj_status_t cmd_set_cap_dev_id(pj_cli_cmd_val *cval)
     pjsua_call_vid_strm_op_param param;
 
     pjsua_call_vid_strm_op_param_default(&param);
-    param.med_idx = cval->argc > 1? pj_strtol(&cval->argv[1]) : -1;
-    param.cap_dev = cval->argc > 2? pj_strtol(&cval->argv[2]) :
-				    PJMEDIA_VID_DEFAULT_CAPTURE_DEV;
+    param.med_idx = cval->argc > 1?
+                    (int)pj_strtol(&cval->argv[1]) : -1;
+    param.cap_dev = cval->argc > 2?
+                    (int)pj_strtol(&cval->argv[2]) :
+                    PJMEDIA_VID_DEFAULT_CAPTURE_DEV;
 
     return pjsua_call_set_vid_strm(current_call,
 				   PJSUA_CALL_VID_STRM_CHANGE_CAP_DEV,
@@ -2279,7 +2283,7 @@ static pj_status_t cmd_vid_device_refresh()
 
 static pj_status_t cmd_vid_device_preview(pj_cli_cmd_val *cval)
 {
-    int dev_id = pj_strtol(&cval->argv[2]);
+    int dev_id = (int)pj_strtol(&cval->argv[2]);
     pj_bool_t on = (pj_ansi_strnicmp(cval->argv[1].ptr, "On", 2) == 0);
 
     if (on) {
@@ -2339,7 +2343,7 @@ static pj_status_t cmd_vid_codec_list()
 
 static pj_status_t cmd_set_vid_codec_prio(pj_cli_cmd_val *cval)
 {
-    int prio = pj_strtol(&cval->argv[2]);
+    int prio = (int)pj_strtol(&cval->argv[2]);
     pj_status_t status;
 
     status = pjsua_vid_codec_set_priority(&cval->argv[1], (pj_uint8_t)prio);
@@ -2355,8 +2359,8 @@ static pj_status_t cmd_set_vid_codec_fps(pj_cli_cmd_val *cval)
     int M, N;
     pj_status_t status;
 
-    M = pj_strtol(&cval->argv[2]);
-    N = pj_strtol(&cval->argv[3]);
+    M = (int)pj_strtol(&cval->argv[2]);
+    N = (int)pj_strtol(&cval->argv[3]);
     status = pjsua_vid_codec_get_param(&cval->argv[1], &cp);
     if (status == PJ_SUCCESS) {
 	cp.enc_fmt.det.vid.fps.num = M;
@@ -2375,8 +2379,8 @@ static pj_status_t cmd_set_vid_codec_bitrate(pj_cli_cmd_val *cval)
     int M, N;
     pj_status_t status;
 
-    M = pj_strtol(&cval->argv[2]);
-    N = pj_strtol(&cval->argv[3]);
+    M = (int)pj_strtol(&cval->argv[2]);
+    N = (int)pj_strtol(&cval->argv[3]);
     status = pjsua_vid_codec_get_param(&cval->argv[1], &cp);
     if (status == PJ_SUCCESS) {
 	cp.enc_fmt.det.vid.avg_bps = M * 1000;
@@ -2395,8 +2399,8 @@ static pj_status_t cmd_set_vid_codec_size(pj_cli_cmd_val *cval)
     int M, N;
     pj_status_t status;
 
-    M = pj_strtol(&cval->argv[2]);
-    N = pj_strtol(&cval->argv[3]);
+    M = (int)pj_strtol(&cval->argv[2]);
+    N = (int)pj_strtol(&cval->argv[3]);
     status = pjsua_vid_codec_get_param(&cval->argv[1], &cp);
     if (status == PJ_SUCCESS) {
 	cp.enc_fmt.det.vid.size.w = M;
@@ -2437,27 +2441,27 @@ static pj_status_t cmd_arrange_vid_win()
 
 static pj_status_t cmd_show_vid_win(pj_cli_cmd_val *cval, pj_bool_t show)
 {
-    pjsua_vid_win_id wid = pj_strtol(&cval->argv[1]);
+    pjsua_vid_win_id wid = (int)pj_strtol(&cval->argv[1]);
     return pjsua_vid_win_set_show(wid, show);
 }
 
 static pj_status_t cmd_move_vid_win(pj_cli_cmd_val *cval)
 {
-    pjsua_vid_win_id wid = pj_strtol(&cval->argv[1]);
+    pjsua_vid_win_id wid = (int)pj_strtol(&cval->argv[1]);
     pjmedia_coord pos;
 
-    pos.x = pj_strtol(&cval->argv[2]);
-    pos.y = pj_strtol(&cval->argv[3]);
+    pos.x = (int)pj_strtol(&cval->argv[2]);
+    pos.y = (int)pj_strtol(&cval->argv[3]);
     return pjsua_vid_win_set_pos(wid, &pos);
 }
 
 static pj_status_t cmd_resize_vid_win(pj_cli_cmd_val *cval)
 {
-    pjsua_vid_win_id wid = pj_strtol(&cval->argv[1]);
+    pjsua_vid_win_id wid = (int)pj_strtol(&cval->argv[1]);
     pjmedia_rect_size size;
 
-    size.w = pj_strtol(&cval->argv[2]);
-    size.h = pj_strtol(&cval->argv[3]);
+    size.w = (int)pj_strtol(&cval->argv[2]);
+    size.h = (int)pj_strtol(&cval->argv[3]);
     return pjsua_vid_win_set_size(wid, &size);
 }
 
@@ -2580,6 +2584,17 @@ static pj_status_t cmd_quit_handler(pj_cli_cmd_val *cval)
 
     /* Invoke CLI stop callback (defined in pjsua_app.c) */
     cli_on_stopped(PJ_FALSE, 0, NULL);
+
+    return PJ_SUCCESS;
+}
+
+static pj_status_t cmd_ip_change_handler(pj_cli_cmd_val *cval)
+{
+    pjsua_ip_change_param param;
+    PJ_UNUSED_ARG(cval);
+
+    pjsua_ip_change_param_default(&param);
+    pjsua_handle_ip_change(&param);    
 
     return PJ_SUCCESS;
 }
@@ -2899,7 +2914,7 @@ static pj_status_t add_config_command(pj_cli_t *c)
 }
 
 #if PJSUA_HAS_VIDEO
-static pj_status_t add_video_command(pj_cli_t *cli)
+static pj_status_t add_video_command(pj_cli_t *c)
 {
     char* video_command =
 	"<CMD name='video' id='600' desc='Video commands'>"
@@ -3038,7 +3053,7 @@ static pj_status_t add_video_command(pj_cli_t *cli)
 	"</CMD>";
 
     pj_str_t xml = pj_str(video_command);
-    return pj_cli_add_cmd_from_xml(cli, NULL,
+    return pj_cli_add_cmd_from_xml(c, NULL,
 				   &xml, cmd_video_handler,
 				   NULL, get_choice_value);
 }
@@ -3065,11 +3080,15 @@ static pj_status_t add_other_command(pj_cli_t *c)
 	"  <ARG name='options4' type='string' desc='Options' optional='1'/>"
 	"</CMD>";
 
+    char* ip_change_command =
+	"<CMD name='ip_change' id='130' desc='Handle IP change'/>";
+
     pj_status_t status;
     pj_str_t sleep_xml = pj_str(sleep_command);
     pj_str_t network_xml = pj_str(network_command);
     pj_str_t shutdown_xml = pj_str(shutdown_command);
     pj_str_t restart_xml = pj_str(restart_command);
+    pj_str_t ip_change_xml = pj_str(ip_change_command);
 
     status = pj_cli_add_cmd_from_xml(c, NULL,
 				     &sleep_xml, cmd_sleep_handler,
@@ -3092,6 +3111,13 @@ static pj_status_t add_other_command(pj_cli_t *c)
 
     status = pj_cli_add_cmd_from_xml(c, NULL,
 				     &restart_xml, cmd_restart_handler,
+				     NULL, NULL);
+
+    if (status != PJ_SUCCESS)
+	return status;
+
+    status = pj_cli_add_cmd_from_xml(c, NULL,
+				     &ip_change_xml, cmd_ip_change_handler,
 				     NULL, NULL);
 
     return status;

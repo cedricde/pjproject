@@ -504,6 +504,14 @@ PJ_DEF(pj_status_t) pjmedia_vid_port_create( pj_pool_t *pool,
 
     PJ_ASSERT_RETURN(vfd->fps.num, PJ_EINVAL);
 
+    /* Get device info */
+    if (prm->vidparam.dir & PJMEDIA_DIR_CAPTURE)
+        status = pjmedia_vid_dev_get_info(prm->vidparam.cap_id, &di);
+    else
+        status = pjmedia_vid_dev_get_info(prm->vidparam.rend_id, &di);
+    if (status != PJ_SUCCESS)
+        return status;
+
     /* Allocate videoport */
     vp = PJ_POOL_ZALLOC_T(pool, pjmedia_vid_port);
     vp->pool = pj_pool_create(pool->factory, "video port", 500, 500, NULL);
@@ -513,14 +521,6 @@ PJ_DEF(pj_status_t) pjmedia_vid_port_create( pj_pool_t *pool,
 
     vparam = prm->vidparam;
     dev_name[0] = '\0';
-
-    /* Get device info */
-    if (vp->dir & PJMEDIA_DIR_CAPTURE)
-        status = pjmedia_vid_dev_get_info(prm->vidparam.cap_id, &di);
-    else
-        status = pjmedia_vid_dev_get_info(prm->vidparam.rend_id, &di);
-    if (status != PJ_SUCCESS)
-        return status;
 
     pj_ansi_snprintf(dev_name, sizeof(dev_name), "%s [%s]",
                      di.name, di.driver);
@@ -586,6 +586,7 @@ PJ_DEF(pj_status_t) pjmedia_vid_port_create( pj_pool_t *pool,
     if (status != PJ_SUCCESS)
 	goto on_error;
 
+    pjmedia_fourcc_name(vparam.fmt.id, fmt_name);
     PJ_LOG(4,(THIS_FILE,
 	      "Device %s opened: format=%s, size=%dx%d @%d:%d fps",
 	      dev_name, fmt_name,

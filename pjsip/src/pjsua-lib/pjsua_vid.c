@@ -75,6 +75,15 @@ pj_status_t pjsua_vid_subsys_init(void)
 	goto on_error;
     }
 
+#if PJMEDIA_HAS_VIDEO && PJMEDIA_HAS_VID_TOOLBOX_CODEC
+    status = pjmedia_codec_vid_toolbox_init(NULL, &pjsua_var.cp.factory);
+    if (status != PJ_SUCCESS) {
+	PJ_PERROR(1,(THIS_FILE, status,
+		     "Error initializing Video Toolbox codec"));
+	goto on_error;
+    }
+#endif
+
 #if PJMEDIA_HAS_VIDEO && PJMEDIA_HAS_OPENH264_CODEC
     status = pjmedia_codec_openh264_vid_init(NULL, &pjsua_var.cp.factory);
     if (status != PJ_SUCCESS) {
@@ -142,6 +151,10 @@ pj_status_t pjsua_vid_subsys_destroy(void)
 
 #if PJMEDIA_HAS_FFMPEG_VID_CODEC
     pjmedia_codec_ffmpeg_vid_deinit();
+#endif
+
+#if PJMEDIA_HAS_VIDEO && PJMEDIA_HAS_VID_TOOLBOX_CODEC
+    pjmedia_codec_vid_toolbox_deinit();
 #endif
 
 #if defined(PJMEDIA_HAS_OPENH264_CODEC) && PJMEDIA_HAS_OPENH264_CODEC != 0
@@ -1029,7 +1042,7 @@ pj_status_t pjsua_vid_channel_update(pjsua_call_media *call_med,
 	/* Setup encoding direction */
 	if (si->dir & PJMEDIA_DIR_ENCODING && !call->local_hold)
 	{
-            pjsua_acc *acc = &pjsua_var.acc[call_med->call->acc_id];
+            pjsua_acc *acc_enc = &pjsua_var.acc[call_med->call->acc_id];
 	    pjsua_vid_win *w;
 	    pjsua_vid_win_id wid;
 	    pj_bool_t just_created = PJ_FALSE;
@@ -1057,10 +1070,8 @@ pj_status_t pjsua_vid_channel_update(pjsua_call_media *call_med,
 					&media_port->info.fmt,
 					call_med->strm.v.rdr_dev,
 					call_med->strm.v.cap_dev,
-					//acc->cfg.vid_rend_dev,
-					//acc->cfg.vid_cap_dev,
 					PJSUA_HIDE_WINDOW,
-                                        acc->cfg.vid_wnd_flags,
+                                        acc_enc->cfg.vid_wnd_flags,
                                         NULL,
 					&wid);
 		if (status != PJ_SUCCESS) {
@@ -1173,7 +1184,8 @@ void pjsua_vid_stop_stream(pjsua_call_media *call_med)
     }
 
     if ((call_med->dir & PJMEDIA_DIR_ENCODING) &&
-	(pjmedia_vid_stream_get_stat(strm, &stat) == PJ_SUCCESS))
+	(pjmedia_vid_stream_get_stat(strm, &stat) == PJ_SUCCESS) &&
+	stat.tx.pkt)
     {
 	/* Save RTP timestamp & sequence, so when media session is
 	 * restarted, those values will be restored as the initial

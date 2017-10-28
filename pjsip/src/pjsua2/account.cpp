@@ -184,6 +184,7 @@ void AccountNatConfig::readObject(const ContainerNode &node) throw(Error)
 
     NODE_READ_NUM_T   ( this_node, pjsua_stun_use, sipStunUse);
     NODE_READ_NUM_T   ( this_node, pjsua_stun_use, mediaStunUse);
+    NODE_READ_NUM_T   ( this_node, pjsua_nat64_opt, nat64Opt);
     NODE_READ_BOOL    ( this_node, iceEnabled);
     NODE_READ_INT     ( this_node, iceMaxHostCands);
     NODE_READ_BOOL    ( this_node, iceAggressiveNomination);
@@ -215,6 +216,7 @@ void AccountNatConfig::writeObject(ContainerNode &node) const throw(Error)
 
     NODE_WRITE_NUM_T   ( this_node, pjsua_stun_use, sipStunUse);
     NODE_WRITE_NUM_T   ( this_node, pjsua_stun_use, mediaStunUse);
+    NODE_WRITE_NUM_T   ( this_node, pjsua_nat64_opt, nat64Opt);
     NODE_WRITE_BOOL    ( this_node, iceEnabled);
     NODE_WRITE_INT     ( this_node, iceMaxHostCands);
     NODE_WRITE_BOOL    ( this_node, iceAggressiveNomination);
@@ -296,6 +298,25 @@ void AccountVideoConfig::writeObject(ContainerNode &node) const throw(Error)
     NODE_WRITE_UNSIGNED( this_node, rateControlBandwidth);
     NODE_WRITE_UNSIGNED( this_node, startKeyframeCount);
     NODE_WRITE_UNSIGNED( this_node, startKeyframeInterval);
+}
+///////////////////////////////////////////////////////////////////////////////
+
+void AccountIpChangeConfig::readObject(const ContainerNode &node) throw(Error)
+{
+    ContainerNode this_node = node.readContainer("AccountIpChangeConfig");
+
+    NODE_READ_BOOL    ( this_node, shutdownTp);
+    NODE_READ_BOOL    ( this_node, hangupCalls);
+    NODE_READ_UNSIGNED( this_node, reinviteFlags);
+}
+
+void AccountIpChangeConfig::writeObject(ContainerNode &node) const throw(Error)
+{
+    ContainerNode this_node = node.writeNewContainer("AccountIpChangeConfig");
+
+    NODE_WRITE_BOOL    ( this_node, shutdownTp);
+    NODE_WRITE_BOOL    ( this_node, hangupCalls);
+    NODE_WRITE_UNSIGNED( this_node, reinviteFlags);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -391,6 +412,7 @@ void AccountConfig::toPj(pjsua_acc_config &ret) const
     // AccountNatConfig
     ret.sip_stun_use		= natConfig.sipStunUse;
     ret.media_stun_use		= natConfig.mediaStunUse;
+    ret.nat64_opt		= natConfig.nat64Opt;
     ret.ice_cfg_use		= PJSUA_ICE_CONFIG_USE_CUSTOM;
     ret.ice_cfg.enable_ice	= natConfig.iceEnabled;
     ret.ice_cfg.ice_max_host_cands = natConfig.iceMaxHostCands;
@@ -442,6 +464,11 @@ void AccountConfig::toPj(pjsua_acc_config &ret) const
     ret.vid_stream_rc_cfg.bandwidth = videoConfig.rateControlBandwidth;
     ret.vid_stream_sk_cfg.count = videoConfig.startKeyframeCount;
     ret.vid_stream_sk_cfg.interval = videoConfig.startKeyframeInterval;
+
+    // AccountIpChangeConfig
+    ret.ip_change_cfg.shutdown_tp = ipChangeConfig.shutdownTp;
+    ret.ip_change_cfg.hangup_calls = ipChangeConfig.hangupCalls;
+    ret.ip_change_cfg.reinvite_flags = ipChangeConfig.reinviteFlags;
 }
 
 /* Initialize from pjsip. */
@@ -534,6 +561,7 @@ void AccountConfig::fromPj(const pjsua_acc_config &prm,
     // AccountNatConfig
     natConfig.sipStunUse	= prm.sip_stun_use;
     natConfig.mediaStunUse	= prm.media_stun_use;
+    natConfig.nat64Opt		= prm.nat64_opt;
     if (prm.ice_cfg_use == PJSUA_ICE_CONFIG_USE_CUSTOM) {
 	natConfig.iceEnabled = PJ2BOOL(prm.ice_cfg.enable_ice);
 	natConfig.iceMaxHostCands = prm.ice_cfg.ice_max_host_cands;
@@ -610,6 +638,11 @@ void AccountConfig::fromPj(const pjsua_acc_config &prm,
     videoConfig.rateControlBandwidth	= prm.vid_stream_rc_cfg.bandwidth;
     videoConfig.startKeyframeCount	= prm.vid_stream_sk_cfg.count;
     videoConfig.startKeyframeInterval	= prm.vid_stream_sk_cfg.interval;
+
+    // AccountIpChangeConfig
+    ipChangeConfig.shutdownTp = PJ2BOOL(prm.ip_change_cfg.shutdown_tp);
+    ipChangeConfig.hangupCalls = PJ2BOOL(prm.ip_change_cfg.hangup_calls);
+    ipChangeConfig.reinviteFlags = prm.ip_change_cfg.reinvite_flags;
 }
 
 void AccountConfig::readObject(const ContainerNode &node) throw(Error)
