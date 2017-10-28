@@ -41,6 +41,7 @@
 #include <pjmedia-codec/silk.h>
 #include <pjmedia-codec/opus.h>
 #include <pjmedia-codec/bcg729.h>
+#include <pjmedia-codec/codec2.h>
 
 
 #endif	/* __PJMEDIA_CODEC_PJMEDIA_CODEC_H__ */

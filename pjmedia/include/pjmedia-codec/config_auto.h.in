@@ -94,6 +94,11 @@
 #undef PJMEDIA_HAS_BCG729
 #endif
 
+/* Codec 2 codec */
+#ifndef PJMEDIA_HAS_CODEC2
+#undef PJMEDIA_HAS_CODEC2
+#endif
+
 #endif	/* __PJMEDIA_CODEC_CONFIG_AUTO_H_ */
 
 

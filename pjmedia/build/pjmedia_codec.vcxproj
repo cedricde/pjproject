@@ -512,6 +512,7 @@
     <ClCompile Include="..\src\pjmedia-codec\amr_sdp_match.c" />
     <ClCompile Include="..\src\pjmedia-codec\audio_codecs.c" />
     <ClCompile Include="..\src\pjmedia-codec\bcg729.c" />
+    <ClCompile Include="..\src\pjmedia-codec\codec2.c" />
     <ClCompile Include="..\src\pjmedia-codec\ffmpeg_vid_codecs.c" />
     <ClCompile Include="..\src\pjmedia-codec\g722.c" />
     <ClCompile Include="..\src\pjmedia-codec\g7221.c" />
@@ -537,6 +538,7 @@
     <ClInclude Include="..\include\pjmedia-codec\amr_sdp_match.h" />
     <ClInclude Include="..\include\pjmedia-codec\audio_codecs.h" />
     <ClInclude Include="..\include\pjmedia-codec\bcg729.h" />
+    <ClInclude Include="..\include\pjmedia-codec\codec2.h" />
     <ClInclude Include="..\include\pjmedia-codec\config.h" />
     <ClInclude Include="..\include\pjmedia-codec\ffmpeg_vid_codecs.h" />
     <ClInclude Include="..\include\pjmedia-codec\g722.h" />

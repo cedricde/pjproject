@@ -513,6 +513,25 @@
 
 
 /**
+ * Enable Codec 2 codec.
+ *
+ * Default: 0
+ */
+#ifndef PJMEDIA_HAS_CODEC2
+#   define PJMEDIA_HAS_CODEC2			0
+#endif
+
+/**
+ * Codec 2 codec mode.
+ *
+ * Default: 0 (3200 bit/s)
+ */
+#ifndef PJMEDIA_CODEC2_DEFAULT_MODE
+#   define PJMEDIA_CODEC2_DEFAULT_MODE		0
+#endif
+
+
+/**
  * Specify if FFMPEG codecs are available.
  *
  * Default: PJMEDIA_HAS_LIBAVFORMAT
