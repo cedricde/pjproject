@@ -973,6 +973,24 @@ void Endpoint::on_buddy_state(pjsua_buddy_id buddy_id)
     buddy->onBuddyState();
 }
 
+void Endpoint::on_buddy_evsub_state(pjsua_buddy_id buddy_id,
+				    pjsip_evsub *sub,
+				    pjsip_event *event)
+{
+    PJ_UNUSED_ARG(sub);
+
+    Buddy *buddy = (Buddy*)pjsua_buddy_get_user_data(buddy_id);
+    if (!buddy || !buddy->isValid()) {
+	/* Ignored */
+	return;
+    }
+
+    OnBuddyEvSubStateParam prm;
+    prm.e.fromPj(*event);
+
+    buddy->onBuddyEvSubState(prm);
+}
+
 // Call callbacks
 void Endpoint::on_call_state(pjsua_call_id call_id, pjsip_event *e)
 {
@@ -1052,10 +1070,8 @@ void Endpoint::on_call_sdp_created(pjsua_call_id call_id,
     }
 }
 
-void Endpoint::on_stream_created(pjsua_call_id call_id,
-                                 pjmedia_stream *strm,
-                                 unsigned stream_idx,
-                                 pjmedia_port **p_port)
+void Endpoint::on_stream_created2(pjsua_call_id call_id,
+				  pjsua_on_stream_created_param *param)
 {
     Call *call = Call::lookup(call_id);
     if (!call) {
@@ -1063,14 +1079,15 @@ void Endpoint::on_stream_created(pjsua_call_id call_id,
     }
     
     OnStreamCreatedParam prm;
-    prm.stream = strm;
-    prm.streamIdx = stream_idx;
-    prm.pPort = (void *)*p_port;
+    prm.stream = param->stream;
+    prm.streamIdx = param->stream_idx;
+    prm.destroyPort = param->destroy_port;
+    prm.pPort = (MediaPort)param->port;
     
     call->onStreamCreated(prm);
     
-    if (prm.pPort != (void *)*p_port)
-        *p_port = (pjmedia_port *)prm.pPort;
+    param->destroy_port = prm.destroyPort;
+    param->port = (pjmedia_port *)prm.pPort;
 }
 
 void Endpoint::on_stream_destroyed(pjsua_call_id call_id,
@@ -1530,6 +1547,7 @@ void Endpoint::libInit(const EpConfig &prmEpConfig) throw(Error)
     ua_cfg.cb.on_typing2	= &Endpoint::on_typing2;
     ua_cfg.cb.on_mwi_info	= &Endpoint::on_mwi_info;
     ua_cfg.cb.on_buddy_state	= &Endpoint::on_buddy_state;
+    ua_cfg.cb.on_buddy_evsub_state = &Endpoint::on_buddy_evsub_state;
     ua_cfg.cb.on_acc_find_for_incoming  = &Endpoint::on_acc_find_for_incoming;
     ua_cfg.cb.on_ip_change_progress	= &Endpoint::on_ip_change_progress;
 
@@ -1538,7 +1556,7 @@ void Endpoint::libInit(const EpConfig &prmEpConfig) throw(Error)
     ua_cfg.cb.on_call_tsx_state         = &Endpoint::on_call_tsx_state;
     ua_cfg.cb.on_call_media_state       = &Endpoint::on_call_media_state;
     ua_cfg.cb.on_call_sdp_created       = &Endpoint::on_call_sdp_created;
-    ua_cfg.cb.on_stream_created         = &Endpoint::on_stream_created;
+    ua_cfg.cb.on_stream_created2        = &Endpoint::on_stream_created2;
     ua_cfg.cb.on_stream_destroyed       = &Endpoint::on_stream_destroyed;
     ua_cfg.cb.on_dtmf_digit             = &Endpoint::on_dtmf_digit;
     ua_cfg.cb.on_call_transfer_request2 = &Endpoint::on_call_transfer_request2;

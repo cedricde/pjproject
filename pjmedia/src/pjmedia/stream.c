@@ -2223,6 +2223,8 @@ PJ_DEF(pj_status_t) pjmedia_stream_create( pjmedia_endpt *endpt,
     /* How many consecutive PLC frames can be generated */
     stream->max_plc_cnt = (MAX_PLC_MSEC+stream->codec_param.info.frm_ptime-1)/
 			    stream->codec_param.info.frm_ptime;
+    /* Disable PLC until a "NORMAL" frame is gotten from the jitter buffer. */
+    stream->plc_cnt = stream->max_plc_cnt;
 
 #if defined(PJMEDIA_HANDLE_G722_MPEG_BUG) && (PJMEDIA_HANDLE_G722_MPEG_BUG!=0)
     stream->rtp_rx_check_cnt = 50;
@@ -2346,11 +2348,13 @@ PJ_DEF(pj_status_t) pjmedia_stream_create( pjmedia_endpt *endpt,
 	stream->out_rtcp_pkt_size = PJMEDIA_MAX_MTU;
 
     stream->out_rtcp_pkt = pj_pool_alloc(pool, stream->out_rtcp_pkt_size);
+    pj_bzero(&att_param, sizeof(att_param));
     att_param.stream = stream;
     att_param.media_type = PJMEDIA_TYPE_AUDIO;
     att_param.user_data = stream;
     pj_sockaddr_cp(&att_param.rem_addr, &info->rem_addr);
-    pj_sockaddr_cp(&att_param.rem_rtcp, &info->rem_rtcp);
+    if (pj_sockaddr_has_addr(&info->rem_rtcp.addr))
+	pj_sockaddr_cp(&att_param.rem_rtcp, &info->rem_rtcp);
     att_param.addr_len = pj_sockaddr_get_len(&info->rem_addr);
     att_param.rtp_cb = &on_rx_rtp;
     att_param.rtcp_cb = &on_rx_rtcp;
